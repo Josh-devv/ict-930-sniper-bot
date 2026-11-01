@@ -18,3 +18,4 @@ bot_log.txt
 sample_data/
 *.csv
 !optimization_results.csv
+
