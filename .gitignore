@@ -1,0 +1,20 @@
+# Python virtual environments & caches
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Sensitive environment credentials
+.env
+*.env
+!.env.example
+
+# Logs and runtime databases
+logs/
+*.log
+bot_log.txt
+
+# Large CSV datasets (avoids GitHub 100MB limits)
+sample_data/
+*.csv
+!optimization_results.csv

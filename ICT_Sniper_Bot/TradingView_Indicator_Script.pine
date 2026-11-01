@@ -1,0 +1,162 @@
+//@version=6
+strategy("ICT 9:30 Sniper — VWAP Band Reversal v6", overlay=true,
+     initial_capital=50000, default_qty_type=strategy.fixed, default_qty_value=1,
+     currency=currency.USD, commission_type=strategy.commission.cash_per_contract,
+     commission_value=5.10, calc_on_every_tick=false)
+
+// =============================================================================
+// INPUTS & SETTINGS
+// =============================================================================
+tz          = "America/New_York"
+grp_vwap    = "VWAP Band Parameters"
+vwap_mult   = input.float(2.0,  "Band Std-Dev Multiplier (σ)", minval=0.5, maxval=5.0, step=0.1,  group=grp_vwap)
+min_band_pt = input.float(15.0, "Min Band Distance from VWAP", minval=5.0, step=1.0,              group=grp_vwap)
+
+grp_risk    = "Risk & Reward Parameters"
+min_stop    = input.float(5.0,  "Min Stop Loss (pts)",         minval=1.0, step=1.0,              group=grp_risk)
+max_stop    = input.float(60.0, "Max Stop Loss (pts)",         minval=10.0,step=5.0,              group=grp_risk)
+min_rr      = input.float(1.5,  "Min R:R to Mean VWAP",        minval=0.5, step=0.1,              group=grp_risk)
+wick_pct    = input.float(0.35, "Min Rejection Wick %",        minval=0.1, maxval=0.9, step=0.05, group=grp_risk)
+
+grp_bot     = "Prop Firm / Automation"
+contracts   = input.int(1,      "Contracts to Trade",          minval=1, maxval=10,               group=grp_bot)
+
+// =============================================================================
+// SESSION ANCHORED VWAP (Resetting daily at 09:30 AM EST)
+// =============================================================================
+var float cum_vol  = na
+var float cum_pv   = na
+var float cum_pv2  = na
+var float vwap_val = na
+var float upper_b  = na
+var float lower_b  = na
+
+is_930 = not na(time(timeframe.period, "0930-0931", tz))
+tp_bar = (high + low + close) / 3.0
+
+if is_930 and (na(cum_vol) or timeframe.change("D"))
+    cum_vol  := volume
+    cum_pv   := tp_bar * volume
+    cum_pv2  := tp_bar * tp_bar * volume
+    vwap_val := tp_bar
+    upper_b  := tp_bar
+    lower_b  := tp_bar
+else if not na(cum_vol)
+    cum_vol  += volume
+    cum_pv   += tp_bar * volume
+    cum_pv2  += tp_bar * tp_bar * volume
+    vwap_val := cum_pv / cum_vol
+    variance  = math.max(0.0, cum_pv2 / cum_vol - vwap_val * vwap_val)
+    stdev     = math.sqrt(variance)
+    upper_b  := vwap_val + vwap_mult * stdev
+    lower_b  := vwap_val - vwap_mult * stdev
+
+// =============================================================================
+// TRADING WINDOW & ONE TRADE PER DAY DISCIPLINE
+// =============================================================================
+in_window = not na(time(timeframe.period, "0930-1130", tz)) and not na(vwap_val)
+
+var bool traded_today = false
+if timeframe.change("D")
+    traded_today := false
+
+// Candle Metrics
+crange    = high - low
+up_wick   = high - math.max(open, close)
+down_wick = math.min(open, close) - low
+
+// =============================================================================
+// SIGNAL DETECTION
+// =============================================================================
+short_sig = in_window and not traded_today and strategy.position_size == 0 and not na(upper_b) and (upper_b - vwap_val) >= min_band_pt and high >= upper_b and crange >= 6.0 and up_wick >= crange * wick_pct and close < open
+long_sig  = in_window and not traded_today and strategy.position_size == 0 and not na(lower_b) and (vwap_val - lower_b) >= min_band_pt and low  <= lower_b and crange >= 6.0 and down_wick >= crange * wick_pct and close > open
+
+// Level lines
+var line sl_line = na
+var line tp_line = na
+var line en_line = na
+
+if strategy.position_size == 0 and strategy.position_size[1] != 0
+    line.delete(sl_line)
+    line.delete(tp_line)
+    line.delete(en_line)
+
+// =============================================================================
+// SHORT TRADE EXECUTION (50% Wick Consequential Encroachment Retest)
+// =============================================================================
+if short_sig
+    entry_p  = (high + math.max(open, close)) / 2.0
+    stop_p   = high + 1.5
+    risk_p   = math.min(math.max(stop_p - entry_p, 1.0), max_stop)
+    target_p = vwap_val
+    reward_p = entry_p - target_p
+    rr       = reward_p / risk_p
+
+    if risk_p >= min_stop and reward_p >= risk_p * min_rr
+        strategy.entry("Short", strategy.short, qty=contracts, limit=entry_p, comment="▼ SHORT")
+        strategy.exit("SL/TP S", "Short", stop=stop_p, limit=target_p)
+        traded_today := true
+
+        // Clean On-Chart Entry Tag
+        label.new(bar_index, high + 3.0,
+                  text="▼  " + str.tostring(entry_p, "#.00"),
+                  color=color.rgb(200,30,50), textcolor=color.white,
+                  style=label.style_label_down, size=size.normal)
+
+        // Clear Stop Loss & Take Profit Projection Lines
+        sl_line := line.new(bar_index, stop_p,   bar_index + 200, stop_p,   color=color.red,    width=2, style=line.style_dashed)
+        tp_line := line.new(bar_index, target_p,  bar_index + 200, target_p, color=color.teal,   width=2, style=line.style_dashed)
+        en_line := line.new(bar_index, entry_p,   bar_index + 200, entry_p,  color=color.yellow, width=1, style=line.style_dotted)
+
+        label.new(bar_index + 5, stop_p,   text="SL " + str.tostring(stop_p,   "#.00") + " (-" + str.tostring(risk_p, "#.1") + " pts)", color=color.rgb(180,0,0,20),   textcolor=color.red,  style=label.style_label_right, size=size.small)
+        label.new(bar_index + 5, target_p, text="TP " + str.tostring(target_p, "#.00") + " (+" + str.tostring(reward_p, "#.1") + " pts)", color=color.rgb(0,120,120,20), textcolor=color.teal, style=label.style_label_right, size=size.small)
+
+// =============================================================================
+// LONG TRADE EXECUTION (50% Wick Consequential Encroachment Retest)
+// =============================================================================
+if long_sig
+    entry_p  = (low + math.min(open, close)) / 2.0
+    stop_p   = low - 1.5
+    risk_p   = math.min(math.max(entry_p - stop_p, 1.0), max_stop)
+    target_p = vwap_val
+    reward_p = target_p - entry_p
+    rr       = reward_p / risk_p
+
+    if risk_p >= min_stop and reward_p >= risk_p * min_rr
+        strategy.entry("Long", strategy.long, qty=contracts, limit=entry_p, comment="▲ LONG")
+        strategy.exit("SL/TP L", "Long", stop=stop_p, limit=target_p)
+        traded_today := true
+
+        // Clean On-Chart Entry Tag
+        label.new(bar_index, low - 3.0,
+                  text="▲  " + str.tostring(entry_p, "#.00"),
+                  color=color.rgb(20,160,80), textcolor=color.white,
+                  style=label.style_label_up, size=size.normal)
+
+        // Clear Stop Loss & Take Profit Projection Lines
+        sl_line := line.new(bar_index, stop_p,   bar_index + 200, stop_p,   color=color.red,    width=2, style=line.style_dashed)
+        tp_line := line.new(bar_index, target_p,  bar_index + 200, target_p, color=color.teal,   width=2, style=line.style_dashed)
+        en_line := line.new(bar_index, entry_p,   bar_index + 200, entry_p,  color=color.yellow, width=1, style=line.style_dotted)
+
+        label.new(bar_index + 5, stop_p,   text="SL " + str.tostring(stop_p,   "#.00") + " (-" + str.tostring(risk_p, "#.1") + " pts)", color=color.rgb(180,0,0,20),   textcolor=color.red,  style=label.style_label_right, size=size.small)
+        label.new(bar_index + 5, target_p, text="TP " + str.tostring(target_p, "#.00") + " (+" + str.tostring(reward_p, "#.1") + " pts)", color=color.rgb(0,120,120,20), textcolor=color.teal, style=label.style_label_right, size=size.small)
+
+// =============================================================================
+// EOD AUTO-FLAT (15:45 EST)
+// =============================================================================
+if not na(time(timeframe.period, "1545-1600", tz)) and strategy.position_size != 0
+    strategy.close_all(comment="EOD Flat")
+
+// =============================================================================
+// PLOTS & ALERTS
+// =============================================================================
+plot(vwap_val, "Session VWAP", color=color.orange, linewidth=2)
+plot(upper_b,  "Upper 2.0σ Band", color=color.red, linewidth=1)
+plot(lower_b,  "Lower 2.0σ Band", color=color.lime, linewidth=1)
+
+plotshape(short_sig, title="Short Signal", location=location.abovebar, style=shape.triangledown, color=color.red,  size=size.small)
+plotshape(long_sig,  title="Long Signal",  location=location.belowbar, style=shape.triangleup,   color=color.lime, size=size.small)
+
+alertcondition(short_sig, title="🔴 SHORT Signal Triggered", message="ICT SHORT triggered at 50% wick retest!")
+alertcondition(long_sig,  title="🟢 LONG Signal Triggered",  message="ICT LONG triggered at 50% wick retest!")
+
