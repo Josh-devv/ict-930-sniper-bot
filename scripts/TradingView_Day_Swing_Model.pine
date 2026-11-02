@@ -1,0 +1,183 @@
+//@version=6
+strategy("ICT Day-Swing — London Liquidity Sweep [HOD/LOD]", overlay=true,
+     initial_capital=50000, default_qty_type=strategy.fixed, default_qty_value=1,
+     currency=currency.USD, commission_type=strategy.commission.cash_per_contract,
+     commission_value=5.10, calc_on_every_tick=false)
+
+// =============================================================================
+// INPUTS & CONFIGURATION
+// =============================================================================
+tz           = "America/New_York"
+grp_session  = "Session Visuals (EST)"
+show_asia    = input.bool(true,  "Highlight Asian Range (18:00 - 02:00)", group=grp_session)
+show_london  = input.bool(true,  "Highlight London Range (02:00 - 05:00)", group=grp_session)
+
+grp_risk     = "Risk & Targets"
+min_risk     = input.float(15.0, "Min Stop Loss (pts)", minval=5.0, step=5.0, group=grp_risk)
+max_risk     = input.float(45.0, "Max Stop Loss (pts)", minval=20.0, step=5.0, group=grp_risk)
+target_mult  = input.float(3.5,  "Target R:R Multiplier", minval=2.0, step=0.5, group=grp_risk)
+max_target   = input.float(250.0,"Max Target Cap (pts)", minval=100.0, step=25.0, group=grp_risk)
+use_be       = input.bool(true,  "Move Stop to Break-Even at +1.5R", group=grp_risk)
+
+// =============================================================================
+// 1. ASIAN SESSION TRACKING (18:00 - 02:00 EST)
+// =============================================================================
+in_asia = not na(time(timeframe.period, "1800-0200", tz))
+var float asia_h = na
+var float asia_l = na
+
+if in_asia and not in_asia[1]
+    asia_h := high
+    asia_l := low
+else if in_asia
+    asia_h := math.max(asia_h, high)
+    asia_l := math.min(asia_l, low)
+
+// =============================================================================
+// 2. LONDON SESSION TRACKING (02:00 - 05:00 EST)
+// =============================================================================
+in_london = not na(time(timeframe.period, "0200-0500", tz))
+var float london_h = na
+var float london_l = na
+
+if in_london and not in_london[1]
+    london_h := high
+    london_l := low
+else if in_london
+    london_h := math.max(london_h, high)
+    london_l := math.min(london_l, low)
+
+// Session background fills
+bgcolor(show_asia   and in_asia   ? color.new(color.purple, 94) : na, title="Asian Session BG")
+bgcolor(show_london and in_london ? color.new(color.blue, 94)   : na, title="London Session BG")
+
+// Plot Key Session Liquidity Pools
+plot(not in_london and not na(london_h) ? london_h : na, "London High Liquidity", color=color.red,   linewidth=1, style=plot.style_linebr)
+plot(not in_london and not na(london_l) ? london_l : na, "London Low Liquidity",  color=color.green, linewidth=1, style=plot.style_linebr)
+
+// =============================================================================
+// 3. NEW YORK SWEEP EXECUTION WINDOW (09:30 - 11:30 EST)
+// =============================================================================
+in_ny = not na(time(timeframe.period, "0930-1130", tz))
+
+var bool traded_today = false
+if timeframe.change("D")
+    traded_today := false
+
+// Sweep Conditions
+is_hod_sweep = in_ny and not traded_today and strategy.position_size == 0 and not na(london_h) and
+               high > london_h and close < london_h and (high - close) >= 12.0
+
+is_lod_sweep = in_ny and not traded_today and strategy.position_size == 0 and not na(london_l) and
+               low < london_l and close > london_l and (close - low) >= 12.0
+
+// Active Trade Level Lines
+var line  en_line      = na
+var line  sl_line      = na
+var line  tp_line      = na
+var label sl_tag       = na
+var label tp_tag       = na
+var float current_sl   = na
+var float current_tp   = na
+var float current_ep   = na
+var bool  be_triggered = false
+
+// Cleanly delete level lines when trade exits
+if strategy.position_size == 0 and strategy.position_size[1] != 0
+    line.delete(en_line)
+    line.delete(sl_line)
+    line.delete(tp_line)
+    label.delete(sl_tag)
+    label.delete(tp_tag)
+    be_triggered := false
+
+// ── SHORT HOD SWING TRADE ────────────────────────────────────────────────────
+if is_hod_sweep
+    ep  = (high + close) / 2.0     // 50% wick retest
+    sl  = high + 3.0               // Stop above High of Day
+    rk  = sl - ep
+    tp  = math.min(london_l, ep - rk * target_mult)
+    tp  := math.max(tp, ep - max_target)
+    rw  = ep - tp
+
+    if rk >= min_risk and rk <= max_risk and rw >= rk * 2.0
+        strategy.entry("Day-Swing Short", strategy.short, limit=ep, comment="▼ HOD Short")
+        strategy.exit("Exit Short", "Day-Swing Short", stop=sl, limit=tp)
+        traded_today := true
+        current_ep   := ep
+        current_sl   := sl
+        current_tp   := tp
+        be_triggered := false
+
+        // Small, clean Entry Arrow on bar
+        label.new(bar_index, high + 2.0,
+                  text="▼ " + str.tostring(ep, "#.25"),
+                  color=color.rgb(200, 30, 50), textcolor=color.white,
+                  style=label.style_label_down, size=size.small)
+
+        // Horizontal Trade Level Lines
+        en_line := line.new(bar_index, ep, bar_index + 200, ep, color=color.yellow, width=1, style=line.style_dotted)
+        sl_line := line.new(bar_index, sl, bar_index + 200, sl, color=color.red,    width=2, style=line.style_dashed)
+        tp_line := line.new(bar_index, tp, bar_index + 200, tp, color=color.green,  width=2, style=line.style_dashed)
+
+        // Clean price tags attached to lines
+        sl_tag := label.new(bar_index + 5, sl, text="SL " + str.tostring(sl, "#.25"), color=color.rgb(180, 0, 0, 20),   textcolor=color.red,   style=label.style_label_right, size=size.small)
+        tp_tag := label.new(bar_index + 5, tp, text="TP " + str.tostring(tp, "#.25"), color=color.rgb(0, 150, 0, 20),   textcolor=color.green, style=label.style_label_right, size=size.small)
+
+// ── LONG LOD SWING TRADE ─────────────────────────────────────────────────────
+if is_lod_sweep
+    ep  = (low + close) / 2.0      // 50% wick retest
+    sl  = low - 3.0                // Stop below Low of Day
+    rk  = ep - sl
+    tp  = math.max(london_h, ep + rk * target_mult)
+    tp  := math.min(tp, ep + max_target)
+    rw  = tp - ep
+
+    if rk >= min_risk and rk <= max_risk and rw >= rk * 2.0
+        strategy.entry("Day-Swing Long", strategy.long, limit=ep, comment="▲ LOD Long")
+        strategy.exit("Exit Long", "Day-Swing Long", stop=sl, limit=tp)
+        traded_today := true
+        current_ep   := ep
+        current_sl   := sl
+        current_tp   := tp
+        be_triggered := false
+
+        // Small, clean Entry Arrow on bar
+        label.new(bar_index, low - 2.0,
+                  text="▲ " + str.tostring(ep, "#.25"),
+                  color=color.rgb(20, 150, 80), textcolor=color.white,
+                  style=label.style_label_up, size=size.small)
+
+        // Horizontal Trade Level Lines
+        en_line := line.new(bar_index, ep, bar_index + 200, ep, color=color.yellow, width=1, style=line.style_dotted)
+        sl_line := line.new(bar_index, sl, bar_index + 200, sl, color=color.red,    width=2, style=line.style_dashed)
+        tp_line := line.new(bar_index, tp, bar_index + 200, tp, color=color.green,  width=2, style=line.style_dashed)
+
+        // Clean price tags attached to lines
+        sl_tag := label.new(bar_index + 5, sl, text="SL " + str.tostring(sl, "#.25"), color=color.rgb(180, 0, 0, 20),   textcolor=color.red,   style=label.style_label_right, size=size.small)
+        tp_tag := label.new(bar_index + 5, tp, text="TP " + str.tostring(tp, "#.25"), color=color.rgb(0, 150, 0, 20),   textcolor=color.green, style=label.style_label_right, size=size.small)
+
+// ── BREAK-EVEN ADJUSTMENT (+1.5R) ───────────────────────────────────────────
+if use_be and strategy.position_size != 0 and not be_triggered
+    rk = math.abs(current_ep - current_sl)
+    if strategy.position_size < 0 and (current_ep - low) >= rk * 1.5
+        current_sl := current_ep - 1.0
+        strategy.exit("Exit Short", "Day-Swing Short", stop=current_sl, limit=current_tp)
+        line.set_y1(sl_line, current_sl)
+        line.set_y2(sl_line, current_sl)
+        label.set_y(sl_tag, current_sl)
+        label.set_text(sl_tag, "SL (BE) " + str.tostring(current_sl, "#.25"))
+        be_triggered := true
+    else if strategy.position_size > 0 and (high - current_ep) >= rk * 1.5
+        current_sl := current_ep + 1.0
+        strategy.exit("Exit Long", "Day-Swing Long", stop=current_sl, limit=current_tp)
+        line.set_y1(sl_line, current_sl)
+        line.set_y2(sl_line, current_sl)
+        label.set_y(sl_tag, current_sl)
+        label.set_text(sl_tag, "SL (BE) " + str.tostring(current_sl, "#.25"))
+        be_triggered := true
+
+// ── EOD FLAT (16:00 EST) ─────────────────────────────────────────────────────
+is_eod = not na(time(timeframe.period, "1600-1615", tz))
+if is_eod and strategy.position_size != 0
+    strategy.close_all(comment="EOD Flat")
