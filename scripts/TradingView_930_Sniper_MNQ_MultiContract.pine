@@ -10,10 +10,8 @@ strategy("ICT 9:30 Sniper — MNQ Multi-Contract Scaling v6", overlay=true,
 tz = "America/New_York"
 
 grp_pos = "MNQ Multi-Contract Sizing (TopStep / FundedNext)"
-total_qty = input.int(5,       "Total MNQ Contracts", minval=1, maxval=20, step=1, group=grp_pos,
-                      tooltip="5 MNQ = $10/pt. Sized perfectly for $50k challenges ($2,000 max DD).")
-tp1_ratio = input.float(0.60,  "TP1 Scale-Out Ratio (0.60 = 60%)", minval=0.1, maxval=1.0, step=0.1, group=grp_pos,
-                      tooltip="60% of 5 contracts = 3 MNQ closed at VWAP. 2 MNQ left for runner.")
+total_qty = input.int(5,       "Total MNQ Contracts", minval=1, maxval=20, step=1, group=grp_pos, tooltip="5 MNQ = $10/pt. Sized perfectly for $50k challenges ($2,000 max DD).")
+tp1_ratio = input.float(0.60,  "TP1 Scale-Out Ratio (0.60 = 60%)", minval=0.1, maxval=1.0, step=0.1, group=grp_pos, tooltip="60% of 5 contracts = 3 MNQ closed at VWAP. 2 MNQ left for runner.")
 
 grp_vwap = "Anchored VWAP & Band Parameters"
 vwap_mult   = input.float(2.0,  "Band Deviation Multiplier (σ)", minval=0.5, maxval=4.0, step=0.1, group=grp_vwap)
@@ -24,8 +22,7 @@ min_stop    = input.float(5.0,  "Min Stop Loss (pts)", minval=1.0, step=1.0, gro
 max_stop    = input.float(60.0, "Max Stop Loss (pts)", minval=10.0, step=5.0, group=grp_risk)
 min_rr      = input.float(1.5,  "Min R:R to VWAP (TP1)", minval=0.5, step=0.1, group=grp_risk)
 wick_pct    = input.float(0.35, "Min Rejection Wick %", minval=0.1, maxval=0.9, step=0.05, group=grp_risk)
-runner_mode = input.string("Opposite 2.0σ Band", "Runner Target (TP2)", 
-                           options=["Opposite 2.0σ Band", "2.0x VWAP Extension", "Runner Trailing (No TP2)"], group=grp_risk)
+runner_mode = input.string("Opposite 2.0σ Band", "Runner Target (TP2)", options=["Opposite 2.0σ Band", "2.0x VWAP Extension", "Runner Trailing (No TP2)"], group=grp_risk)
 
 // Calculate partial contract splits
 tp1_qty    = total_qty > 1 ? math.max(1, math.round(total_qty * tp1_ratio)) : 1
@@ -74,14 +71,9 @@ crange    = high - low
 up_wick   = high - math.max(open, close)
 down_wick = math.min(open, close) - low
 
-// Signal Conditions
-short_sig = in_window and not traded_today and strategy.position_size == 0 and 
-            not na(upper_b) and (upper_b - vwap_val) >= min_band_pt and 
-            high >= upper_b and crange >= 6.0 and up_wick >= crange * wick_pct and close < open
-
-long_sig  = in_window and not traded_today and strategy.position_size == 0 and 
-            not na(lower_b) and (vwap_val - lower_b) >= min_band_pt and 
-            low  <= lower_b and crange >= 6.0 and down_wick >= crange * wick_pct and close > open
+// Signal Conditions (Single contiguous lines - completely error-free)
+short_sig = in_window and not traded_today and strategy.position_size == 0 and not na(upper_b) and (upper_b - vwap_val) >= min_band_pt and high >= upper_b and crange >= 6.0 and up_wick >= crange * wick_pct and close < open
+long_sig  = in_window and not traded_today and strategy.position_size == 0 and not na(lower_b) and (vwap_val - lower_b) >= min_band_pt and low <= lower_b and crange >= 6.0 and down_wick >= crange * wick_pct and close > open
 
 // Level Lines & Dynamic Labels
 var line  sl_line      = na
@@ -120,8 +112,7 @@ if short_sig
     rw1  = ep - tp1
 
     // TP2 Target calculation
-    tp2 = runner_mode == "Opposite 2.0σ Band" ? lower_b :
-          runner_mode == "2.0x VWAP Extension" ? ep - rw1 * 2.0 : na
+    tp2 = runner_mode == "Opposite 2.0σ Band" ? lower_b : (runner_mode == "2.0x VWAP Extension" ? ep - rw1 * 2.0 : na)
 
     if rk >= min_stop and rw1 >= rk * min_rr
         strategy.entry("Short", strategy.short, qty=total_qty, limit=ep, comment="▼ Short " + str.tostring(total_qty) + " MNQ")
@@ -139,25 +130,19 @@ if short_sig
         tp1_filled   := false
 
         // Small, aesthetic On-Chart Entry Tag
-        label.new(bar_index, high + 2.0,
-                  text="▼ " + str.tostring(ep, "#.25") + " (" + str.tostring(total_qty) + " MNQ)",
-                  color=color.rgb(200, 30, 50), textcolor=color.white,
-                  style=label.style_label_down, size=size.small)
+        label.new(bar_index, high + 2.0, text="▼ " + str.tostring(ep, "#.25") + " (" + str.tostring(total_qty) + " MNQ)", color=color.rgb(200, 30, 50), textcolor=color.white, style=label.style_label_down, size=size.small)
 
         // Trade Projection Lines
         en_line  := line.new(bar_index, ep,  bar_index + 150, ep,  color=color.yellow, width=1, style=line.style_dotted)
         sl_line  := line.new(bar_index, sl,  bar_index + 150, sl,  color=color.red,    width=2, style=line.style_dashed)
         tp1_line := line.new(bar_index, tp1, bar_index + 150, tp1, color=color.teal,   width=2, style=line.style_dashed)
         
-        sl_tag   := label.new(bar_index + 5, sl,  text="SL " + str.tostring(sl, "#.25") + " (-" + str.tostring(rk, "#.1") + " pts)", 
-                              color=color.rgb(180,0,0,20), textcolor=color.red, style=label.style_label_right, size=size.small)
-        tp1_tag  := label.new(bar_index + 5, tp1, text="TP1 " + str.tostring(tp1, "#.25") + " [60% / " + str.tostring(tp1_qty) + " MNQ]", 
-                              color=color.rgb(0,120,120,20), textcolor=color.teal, style=label.style_label_right, size=size.small)
+        sl_tag   := label.new(bar_index + 5, sl,  text="SL " + str.tostring(sl, "#.25") + " (-" + str.tostring(rk, "#.1") + " pts)", color=color.rgb(180,0,0,20), textcolor=color.red, style=label.style_label_right, size=size.small)
+        tp1_tag  := label.new(bar_index + 5, tp1, text="TP1 " + str.tostring(tp1, "#.25") + " [60% / " + str.tostring(tp1_qty) + " MNQ]", color=color.rgb(0,120,120,20), textcolor=color.teal, style=label.style_label_right, size=size.small)
         
         if runner_qty > 0 and not na(tp2)
             tp2_line := line.new(bar_index, tp2, bar_index + 150, tp2, color=color.green, width=2, style=line.style_dashed)
-            tp2_tag  := label.new(bar_index + 5, tp2, text="TP2 " + str.tostring(tp2, "#.25") + " [40% / " + str.tostring(runner_qty) + " MNQ]",
-                                  color=color.rgb(0,150,0,20), textcolor=color.green, style=label.style_label_right, size=size.small)
+            tp2_tag  := label.new(bar_index + 5, tp2, text="TP2 " + str.tostring(tp2, "#.25") + " [40% / " + str.tostring(runner_qty) + " MNQ]", color=color.rgb(0,150,0,20), textcolor=color.green, style=label.style_label_right, size=size.small)
 
 // =============================================================================
 // 5. LONG ORDER EXECUTION (50% Wick Limit Entry + Multi-Contract Scale)
@@ -170,8 +155,7 @@ if long_sig
     rw1  = tp1 - ep
 
     // TP2 Target calculation
-    tp2 = runner_mode == "Opposite 2.0σ Band" ? upper_b :
-          runner_mode == "2.0x VWAP Extension" ? ep + rw1 * 2.0 : na
+    tp2 = runner_mode == "Opposite 2.0σ Band" ? upper_b : (runner_mode == "2.0x VWAP Extension" ? ep + rw1 * 2.0 : na)
 
     if rk >= min_stop and rw1 >= rk * min_rr
         strategy.entry("Long", strategy.long, qty=total_qty, limit=ep, comment="▲ Long " + str.tostring(total_qty) + " MNQ")
@@ -189,25 +173,19 @@ if long_sig
         tp1_filled   := false
 
         // Small, aesthetic On-Chart Entry Tag
-        label.new(bar_index, low - 2.0,
-                  text="▲ " + str.tostring(ep, "#.25") + " (" + str.tostring(total_qty) + " MNQ)",
-                  color=color.rgb(20, 160, 80), textcolor=color.white,
-                  style=label.style_label_up, size=size.small)
+        label.new(bar_index, low - 2.0, text="▲ " + str.tostring(ep, "#.25") + " (" + str.tostring(total_qty) + " MNQ)", color=color.rgb(20, 160, 80), textcolor=color.white, style=label.style_label_up, size=size.small)
 
         // Trade Projection Lines
         en_line  := line.new(bar_index, ep,  bar_index + 150, ep,  color=color.yellow, width=1, style=line.style_dotted)
         sl_line  := line.new(bar_index, sl,  bar_index + 150, sl,  color=color.red,    width=2, style=line.style_dashed)
         tp1_line := line.new(bar_index, tp1, bar_index + 150, tp1, color=color.teal,   width=2, style=line.style_dashed)
         
-        sl_tag   := label.new(bar_index + 5, sl,  text="SL " + str.tostring(sl, "#.25") + " (-" + str.tostring(rk, "#.1") + " pts)", 
-                              color=color.rgb(180,0,0,20), textcolor=color.red, style=label.style_label_right, size=size.small)
-        tp1_tag  := label.new(bar_index + 5, tp1, text="TP1 " + str.tostring(tp1, "#.25") + " [60% / " + str.tostring(tp1_qty) + " MNQ]", 
-                              color=color.rgb(0,120,120,20), textcolor=color.teal, style=label.style_label_right, size=size.small)
+        sl_tag   := label.new(bar_index + 5, sl,  text="SL " + str.tostring(sl, "#.25") + " (-" + str.tostring(rk, "#.1") + " pts)", color=color.rgb(180,0,0,20), textcolor=color.red, style=label.style_label_right, size=size.small)
+        tp1_tag  := label.new(bar_index + 5, tp1, text="TP1 " + str.tostring(tp1, "#.25") + " [60% / " + str.tostring(tp1_qty) + " MNQ]", color=color.rgb(0,120,120,20), textcolor=color.teal, style=label.style_label_right, size=size.small)
         
         if runner_qty > 0 and not na(tp2)
             tp2_line := line.new(bar_index, tp2, bar_index + 150, tp2, color=color.green, width=2, style=line.style_dashed)
-            tp2_tag  := label.new(bar_index + 5, tp2, text="TP2 " + str.tostring(tp2, "#.25") + " [40% / " + str.tostring(runner_qty) + " MNQ]",
-                                  color=color.rgb(0,150,0,20), textcolor=color.green, style=label.style_label_right, size=size.small)
+            tp2_tag  := label.new(bar_index + 5, tp2, text="TP2 " + str.tostring(tp2, "#.25") + " [40% / " + str.tostring(runner_qty) + " MNQ]", color=color.rgb(0,150,0,20), textcolor=color.green, style=label.style_label_right, size=size.small)
 
 // =============================================================================
 // 6. DYNAMIC BREAK-EVEN ON RUNNER CONTRACTS
