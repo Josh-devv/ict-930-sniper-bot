@@ -58,3 +58,4 @@
 2. **1 Trade Per Day Rule**: Once the daily setup triggers and exits, never take manual trades.
 3. **If You Have a Big Day**: If Day 1 makes $1,200+, do not stop trading immediately. Let the bot run for another 2–3 days so the profit is evenly distributed across 4–5 days.
 4. **Minimum 5 Days**: FundedNext requires trading on at least 5 separate days before requesting the funded certificate. The bot naturally takes ~6–10 days to hit the target.
+

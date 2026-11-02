@@ -48,3 +48,4 @@ The Python script [`scripts/bot_exness_mt5.py`](file:///c:/Users/JOSHUA/Desktop/
 - Monitors live 9:30 AM open on USTEC.
 - Detects the 2.0σ VWAP band rejection.
 - Automatically places the 0.01 lot order with Stop Loss and Take Profit directly in your Exness account!
+
