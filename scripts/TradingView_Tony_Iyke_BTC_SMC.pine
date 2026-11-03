@@ -1,0 +1,128 @@
+//@version=6
+strategy("Tony Iyke SMC BTC Sniper (15m POI + 3m Inducement CHoCH)", overlay=true, initial_capital=50000, default_qty_type=strategy.cash, default_qty_value=10000, commission_type=strategy.commission.cash_per_order, commission_value=2.5)
+
+// ==========================================
+// INPUTS & PARAMETERS
+// ==========================================
+grp_htf  = "HTF Structure & POI (15-Minute)"
+fvg_min_size = input.float(30.0, "Min 15m FVG Gap Size ($)", step=5.0, group=grp_htf)
+
+grp_ltf  = "LTF Confirmation (3-Minute)"
+lookback_idm = input.int(5, "Inducement Swing Lookback", minval=3, group=grp_ltf, tooltip="Bars to determine minor liquidity low for Inducement sweep")
+wick_min     = input.float(0.25, "Min CHoCH Rejection Wick (25%)", step=0.05, group=grp_ltf)
+close_str    = input.float(0.65, "Min Close Strength (Top 35% of Bar)", step=0.05, group=grp_ltf)
+
+grp_risk = "Risk & Target Multipliers"
+stop_buffer  = input.float(100.0, "Structural Stop Buffer ($)", step=10.0, group=grp_risk)
+rr_tp1       = input.float(1.5, "TP1 Target (Bank 60% + BE)", step=0.1, group=grp_risk)
+rr_tp2       = input.float(3.5, "TP2 Target (Bank 40% Runner)", step=0.5, group=grp_risk)
+
+grp_time = "Session Windows (UTC)"
+enable_london = input.bool(true, "London Session (07:00 - 11:00 UTC)", group=grp_time)
+enable_ny     = input.bool(true, "NY Session (13:00 - 18:00 UTC)", group=grp_time)
+
+// ==========================================
+// SESSION RESTRICTION
+// ==========================================
+in_london = not na(time(timeframe.period, "0700-1100", "UTC")) and enable_london
+in_ny     = not na(time(timeframe.period, "1300-1800", "UTC")) and enable_ny
+is_active_session = in_london or in_ny
+
+// ==========================================
+// HTF 15M POI (FAIR VALUE GAP) DETECTION
+// ==========================================
+// Fetch 15m bar components using request.security
+[h15_1, l15_1, h15_3, l15_3] = request.security(syminfo.tickerid, "15", [high[2], low[2], high, low], barmerge.gaps_off, barmerge.lookahead_off)
+
+// Bullish 15m FVG: Candle 1 High < Candle 3 Low
+is_15m_bull_fvg = (l15_3 - h15_1) >= fvg_min_size
+var float poi_top = na
+var float poi_bot = na
+
+if is_15m_bull_fvg
+    poi_top := l15_3
+    poi_bot := h15_1
+
+// ==========================================
+// LTF 3M INDUCEMENT & CHOCH CONFIRMATION
+// ==========================================
+local_low = ta.lowest(low, lookback_idm)[1]
+
+candle_range = math.max(1.0, high - low)
+lower_wick   = math.min(open, close) - low
+wick_ratio   = lower_wick / candle_range
+strength     = (close - low) / candle_range
+
+// Inside 15m POI condition
+inside_15m_poi = not na(poi_top) and not na(poi_bot) and (low <= poi_top) and (high >= poi_bot)
+
+// Inducement Sweep: Low sweeps below minor local low
+idm_swept = low <= local_low
+
+// CHoCH Displacement Confirmation
+choch_confirmed = (strength >= close_str) and (wick_ratio >= wick_min) and (close > open)
+
+// Master Tony Iyke Buy Signal
+tony_iyke_signal = is_active_session and inside_15m_poi and idm_swept and choch_confirmed
+
+// Levels
+entry_price = low + 0.50 * lower_wick
+stop_price  = low - stop_buffer
+risk_dist   = entry_price - stop_price
+tp1_price   = entry_price + rr_tp1 * risk_dist
+tp2_price   = entry_price + rr_tp2 * risk_dist
+
+// ==========================================
+// PERSISTENT ON-SCREEN PRICE LINES
+// ==========================================
+var line l_entry = na
+var line l_stop  = na
+var line l_tp1   = na
+var line l_tp2   = na
+
+if tony_iyke_signal and risk_dist >= 40.0
+    line.delete(l_entry)
+    line.delete(l_stop)
+    line.delete(l_tp1)
+    line.delete(l_tp2)
+
+    l_entry := line.new(bar_index, entry_price, bar_index + 15, entry_price, color=color.aqua, width=2, style=line.style_dashed)
+    l_stop  := line.new(bar_index, stop_price, bar_index + 15, stop_price, color=color.red, width=2)
+    l_tp1   := line.new(bar_index, tp1_price, bar_index + 15, tp1_price, color=color.green, width=2)
+    l_tp2   := line.new(bar_index, tp2_price, bar_index + 15, tp2_price, color=color.lime, width=2, style=line.style_dotted)
+
+    label.new(bar_index + 2, entry_price, "TONY IYKE BUY (50% Wick)", color=color.aqua, textcolor=color.black, style=label.style_label_right, size=size.small)
+    label.new(bar_index + 2, stop_price, "STOP LOSS", color=color.red, textcolor=color.white, style=label.style_label_right, size=size.small)
+    label.new(bar_index + 2, tp1_price, "TP1 (60% Close + BE)", color=color.green, textcolor=color.white, style=label.style_label_right, size=size.small)
+    label.new(bar_index + 2, tp2_price, "TP2 (40% Runner)", color=color.lime, textcolor=color.black, style=label.style_label_right, size=size.small)
+
+// ==========================================
+// STRATEGY EXECUTION (50% CE Limit, Multi-TP)
+// ==========================================
+if tony_iyke_signal and risk_dist >= 40.0 and strategy.position_size == 0
+    strategy.entry("Tony_TP1", strategy.long, limit=entry_price, qty=6) // 60%
+    strategy.entry("Tony_TP2", strategy.long, limit=entry_price, qty=4) // 40%
+    strategy.exit("Exit_Tony_TP1", "Tony_TP1", stop=stop_price, limit=tp1_price)
+    strategy.exit("Exit_Tony_TP2", "Tony_TP2", stop=stop_price, limit=tp2_price)
+
+// Move Runner to BE once TP1 hits
+if strategy.position_size > 0
+    if ta.change(strategy.closedtrades) > 0
+        last_id = strategy.closedtrades.entry_id(strategy.closedtrades - 1)
+        if last_id == "Tony_TP1"
+            strategy.exit("Exit_Tony_TP2", "Tony_TP2", stop=strategy.position_avg_price + 30.0, limit=tp2_price)
+
+// ==========================================
+// VISUAL MARKERS
+// ==========================================
+// Active Session Highlights
+bgcolor(in_london ? color.new(color.blue, 96) : na, title="London Session")
+bgcolor(in_ny ? color.new(color.orange, 96) : na, title="NY Session")
+
+// 15m POI Zone Fill
+p_top = plot(inside_15m_poi ? poi_top : na, "15m POI Top", color=color.new(color.purple, 30), style=plot.style_linebr)
+p_bot = plot(inside_15m_poi ? poi_bot : na, "15m POI Bottom", color=color.new(color.purple, 30), style=plot.style_linebr)
+fill(p_top, p_bot, color=color.new(color.purple, 92), title="15m POI Demand Zone")
+
+// Signal shape
+plotshape(tony_iyke_signal, "Tony Iyke Buy Signal", shape.triangleup, location.belowbar, color=color.green, size=size.normal, text="IDM CHOCH BUY")
