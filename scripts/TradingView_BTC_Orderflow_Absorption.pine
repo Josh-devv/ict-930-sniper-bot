@@ -10,12 +10,12 @@ wick_min = input.float(0.30, "Min Absorption Wick Ratio (30%)", step=0.05, group
 lookback = input.int(20, "Local Liquidity Sweep Lookback", minval=5, group=grp_of, tooltip="Number of bars to determine previous local high/low")
 
 grp_dir  = "Directional Bias"
-long_only = input.bool(true, "Trade LONG-Only (Recommended: 98% WR)", group=grp_dir, tooltip="Backtest showed Long absorptions produce overwhelming 98% edge on BTC")
+long_only = input.bool(true, "Trade LONG-Only (Recommended: 98% Edge)", group=grp_dir, tooltip="Backtest showed Long absorptions produce overwhelming 98% edge on BTC")
 
 grp_risk = "Risk & Targets"
 atr_mult = input.float(1.0, "Stop Loss ATR Buffer", step=0.1, group=grp_risk)
-rr_tp1   = input.float(1.5, "TP1 Risk-Reward Ratio (60% close)", step=0.1, group=grp_risk)
-rr_tp2   = input.float(3.0, "TP2 Risk-Reward Ratio (40% runner)", step=0.5, group=grp_risk)
+rr_tp1   = input.float(1.5, "TP1 Risk-Reward Ratio (Bank 60%)", step=0.1, group=grp_risk)
+rr_tp2   = input.float(3.0, "TP2 Risk-Reward Ratio (Bank 40% Runner)", step=0.5, group=grp_risk)
 
 grp_time = "Session Windows (UTC)"
 enable_london = input.bool(true, "Enable London Session (07:00 - 11:00 UTC)", group=grp_time)
@@ -51,10 +51,7 @@ atr = ta.atr(14)
 // ==========================================
 // ABSORPTION SIGNAL DETECTION
 // ==========================================
-// Bullish Absorption: Panic sellers swept local low, but limit buyers absorbed the dump (Climax Vol + 30%+ Lower Wick)
 bull_absorption = is_active_session and vol_climax and (low <= local_low) and (lower_wick_ratio >= wick_min)
-
-// Bearish Absorption: Breakout buyers swept local high, but limit sellers absorbed the pump (Climax Vol + 30%+ Upper Wick)
 bear_absorption = is_active_session and vol_climax and (high >= local_high) and (upper_wick_ratio >= wick_min) and not long_only
 
 // Execution Variables
@@ -69,6 +66,31 @@ short_stop  = high + atr_mult * atr
 short_dist  = short_stop - short_entry
 short_tp1   = short_entry - rr_tp1 * short_dist
 short_tp2   = short_entry - rr_tp2 * short_dist
+
+// ==========================================
+// PERSISTENT ON-SCREEN PRICE LEVELS (BOXES & LINES)
+// ==========================================
+var line l_entry = na
+var line l_stop  = na
+var line l_tp1   = na
+var line l_tp2   = na
+
+if bull_absorption and long_dist >= 40.0
+    // Draw Entry Line (Cyan / Blue)
+    line.delete(l_entry)
+    line.delete(l_stop)
+    line.delete(l_tp1)
+    line.delete(l_tp2)
+    
+    l_entry := line.new(bar_index, long_entry, bar_index + 12, long_entry, color=color.aqua, width=2, style=line.style_dashed)
+    l_stop  := line.new(bar_index, long_stop, bar_index + 12, long_stop, color=color.red, width=2)
+    l_tp1   := line.new(bar_index, long_tp1, bar_index + 12, long_tp1, color=color.green, width=2)
+    l_tp2   := line.new(bar_index, long_tp2, bar_index + 12, long_tp2, color=color.lime, width=2, style=line.style_dotted)
+
+    label.new(bar_index + 2, long_entry, "BUY ENTRY (50% Wick)", color=color.aqua, textcolor=color.black, style=label.style_label_right, size=size.small)
+    label.new(bar_index + 2, long_stop, "STOP LOSS", color=color.red, textcolor=color.white, style=label.style_label_right, size=size.small)
+    label.new(bar_index + 2, long_tp1, "TP1 (60% Close + BE)", color=color.green, textcolor=color.white, style=label.style_label_right, size=size.small)
+    label.new(bar_index + 2, long_tp2, "TP2 (40% Runner)", color=color.lime, textcolor=color.black, style=label.style_label_right, size=size.small)
 
 // ==========================================
 // STRATEGY EXECUTION (50% CE Limit Entry, Multi-TP)
