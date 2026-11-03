@@ -19,8 +19,8 @@ from datetime import datetime, timezone
 # CONFIGURATION
 # ==========================================
 # You can set these via environment variables or paste your tokens here:
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
-TELEGRAM_CHAT_ID   = os.getenv("TELEGRAM_CHAT_ID", "YOUR_CHAT_ID_HERE")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8290114978:AAETL_UeHqbu8r4n2jHvDXxW-VKuEnvyp0c")
+TELEGRAM_CHAT_ID   = os.getenv("TELEGRAM_CHAT_ID", "5642644592")
 
 SYMBOL             = "BTCUSDT"
 INTERVAL           = "5m"
@@ -169,3 +169,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

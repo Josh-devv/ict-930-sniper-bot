@@ -1,0 +1,29 @@
+name: BTC Orderflow Alert Bot
+
+on:
+  schedule:
+    # Run every 5 minutes 24/7 (Free in public GitHub repos)
+    - cron: '*/5 * * * *'
+  workflow_dispatch: # Allows manual trigger from GitHub UI
+
+jobs:
+  check-btc-signals:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Dependencies
+        run: pip install requests pandas numpy
+
+      - name: Check 5m Absorption Signal & Send Telegram Alert
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python scripts/btc_telegram_alert_bot_cron.py
