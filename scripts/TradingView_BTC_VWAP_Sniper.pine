@@ -1,0 +1,118 @@
+//@version=6
+strategy("ICT BTC NY-Open VWAP Sniper (Multi-TP)", overlay=true, initial_capital=50000, default_qty_type=strategy.cash, default_qty_value=10000, commission_type=strategy.commission.cash_per_order, commission_value=2.5)
+
+// ==========================================
+// INPUTS & PARAMETERS
+// ==========================================
+grp_vwap = "VWAP & Band Settings"
+dev_mult = input.float(2.0, "Band Deviation (σ)", step=0.1, group=grp_vwap)
+min_band_dist = input.float(500.0, "Min Band Distance ($)", step=50.0, group=grp_vwap, tooltip="Bands must be at least this far from VWAP")
+
+grp_sig = "Signal Settings"
+wick_threshold = input.float(0.35, "Min Wick Ratio (35%)", step=0.05, group=grp_sig)
+ce_ratio = input.float(0.50, "CE Entry Pullback (50%)", step=0.05, group=grp_sig)
+stop_buffer = input.float(150.0, "Stop Loss Buffer ($)", step=10.0, group=grp_sig)
+
+grp_time = "Session Window (UTC)"
+signal_session = input.session("1300-1500", "Signal Window (UTC)", group=grp_time, tooltip="13:00 to 15:00 UTC = 9:00 AM to 11:00 AM EST (NY Open)")
+eod_session    = input.session("2200-2205", "EOD Force Flat Time (UTC)", group=grp_time)
+
+// ==========================================
+// ROLLING DAILY VWAP (Resets at 00:00 UTC)
+// ==========================================
+is_new_day = ta.change(time("D")) != 0
+
+var float cum_vol = 0.0
+var float cum_tpv = 0.0
+var float cum_tp2v = 0.0
+
+if is_new_day
+    cum_vol := 0.0
+    cum_tpv := 0.0
+    cum_tp2v := 0.0
+
+tp = hlc3
+vol = volume > 0 ? volume : 1.0
+
+cum_vol  += vol
+cum_tpv  += tp * vol
+cum_tp2v += (tp * tp) * vol
+
+daily_vwap = cum_vol > 0 ? cum_tpv / cum_vol : close
+variance = cum_vol > 0 ? math.max(0.0, (cum_tp2v / cum_vol) - (daily_vwap * daily_vwap)) : 0.0
+std_dev = math.sqrt(variance)
+
+upper_band = daily_vwap + dev_mult * std_dev
+lower_band = daily_vwap - dev_mult * std_dev
+
+// Plot bands
+plot(daily_vwap, "Daily VWAP", color=color.yellow, linewidth=2)
+p_upper = plot(upper_band, "Upper 2.0σ Band", color=color.new(color.red, 20), linewidth=2)
+p_lower = plot(lower_band, "Lower 2.0σ Band", color=color.new(color.green, 20), linewidth=2)
+fill(p_upper, p_lower, color=color.new(color.blue, 96), title="Band Cloud")
+
+// ==========================================
+// SESSION RESTRICTION & 1 TRADE PER DAY
+// ==========================================
+in_signal_window = not na(time(timeframe.period, signal_session, "UTC"))
+in_eod_window    = not na(time(timeframe.period, eod_session, "UTC"))
+
+var bool trade_taken_today = false
+if is_new_day
+    trade_taken_today := false
+
+// ==========================================
+// CANDLE ANATOMY & PATTERN DETECTION
+// ==========================================
+candle_range = high - low
+upper_wick   = high - math.max(open, close)
+lower_wick   = math.min(open, close) - low
+
+// SHORT: Touches Upper Band, closes below it, upper wick >= 35% of range
+short_cond = in_signal_window and not trade_taken_today and (high >= upper_band) and (close < upper_band) and (candle_range >= 10.0) and ((upper_band - daily_vwap) >= min_band_dist) and (candle_range > 0 and (upper_wick / candle_range) >= wick_threshold)
+
+// LONG: Touches Lower Band, closes above it, lower wick >= 35% of range
+long_cond = in_signal_window and not trade_taken_today and (low <= lower_band) and (close > lower_band) and (candle_range >= 10.0) and ((daily_vwap - lower_band) >= min_band_dist) and (candle_range > 0 and (lower_wick / candle_range) >= wick_threshold)
+
+// Risk/Reward Filter to VWAP (min 1.5R required)
+short_entry = high - ce_ratio * upper_wick
+short_stop  = high + stop_buffer
+short_rr_ok = (short_entry - daily_vwap) >= 1.5 * (short_stop - short_entry)
+
+long_entry  = low + ce_ratio * lower_wick
+long_stop   = low - stop_buffer
+long_rr_ok  = (daily_vwap - long_entry) >= 1.5 * (long_entry - long_stop)
+
+// ==========================================
+// EXECUTION ENGINE (Limit at CE, 60% TP1, 40% TP2)
+// ==========================================
+if short_cond and short_rr_ok and strategy.position_size == 0
+    trade_taken_today := true
+    strategy.entry("Short_TP1", strategy.short, limit=short_entry, qty=6) // 60%
+    strategy.entry("Short_TP2", strategy.short, limit=short_entry, qty=4) // 40%
+    strategy.exit("Exit_Short_TP1", "Short_TP1", stop=short_stop, limit=daily_vwap)
+    strategy.exit("Exit_Short_TP2", "Short_TP2", stop=short_stop, limit=lower_band)
+
+if long_cond and long_rr_ok and strategy.position_size == 0
+    trade_taken_today := true
+    strategy.entry("Long_TP1", strategy.long, limit=long_entry, qty=6) // 60%
+    strategy.entry("Long_TP2", strategy.long, limit=long_entry, qty=4) // 40%
+    strategy.exit("Exit_Long_TP1", "Long_TP1", stop=long_stop, limit=daily_vwap)
+    strategy.exit("Exit_Long_TP2", "Long_TP2", stop=long_stop, limit=upper_band)
+
+// Move runner stop to Breakeven when TP1 is closed
+if strategy.position_size != 0
+    if ta.change(strategy.closedtrades) > 0
+        last_trade_id = strategy.closedtrades.entry_id(strategy.closedtrades - 1)
+        if last_trade_id == "Short_TP1"
+            strategy.exit("Exit_Short_TP2", "Short_TP2", stop=strategy.position_avg_price + 50.0, limit=lower_band)
+        if last_trade_id == "Long_TP1"
+            strategy.exit("Exit_Long_TP2", "Long_TP2", stop=strategy.position_avg_price - 50.0, limit=upper_band)
+
+// EOD Force Close
+if in_eod_window and strategy.position_size != 0
+    strategy.close_all(comment="EOD Flat")
+
+// Visual markers
+plotshape(short_cond and short_rr_ok, "Short Signal", shape.triangledown, location.abovebar, color.red, size=size.small)
+plotshape(long_cond and long_rr_ok, "Long Signal", shape.triangleup, location.belowbar, color.green, size=size.small)
