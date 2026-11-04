@@ -59,9 +59,9 @@ def check_latest_candle():
     raw = list(reversed(raw))
     df = pd.DataFrame(raw, columns=[
         'open_time', 'open', 'high', 'low', 'close', 'volume',
-        'quote_volume', 'confirm'
+        'quote_volume', 'taker_volume', 'confirm'
     ])
-    for col in ['open', 'high', 'low', 'close', 'volume']:
+    for col in ['open', 'high', 'low', 'close', 'volume', 'quote_volume']:
         df[col] = df[col].astype(float)
 
     # Closed candle is second to last (last candle may still be live)
@@ -73,9 +73,10 @@ def check_latest_candle():
     now_ny = datetime.now(timezone.utc).astimezone(ny_tz)
     now_str = now_ny.strftime("%Y-%m-%d %H:%M NY")
 
-    vol_series = df['volume'].iloc[:-1]
+    # Use USDT dollar volume (quote_volume) — matches what TradingView displays
+    vol_series = df['quote_volume'].iloc[:-1]
     vol_ma = vol_series.rolling(20).mean().iloc[-1]
-    vol_climax = (closed_candle['volume'] >= vol_ma * VOL_MULT)
+    vol_climax = (closed_candle['quote_volume'] >= vol_ma * VOL_MULT)
 
     local_low = df['low'].iloc[-22:-2].min()
     low_swept = (closed_candle['low'] <= local_low)
