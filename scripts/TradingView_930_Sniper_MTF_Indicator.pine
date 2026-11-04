@@ -131,29 +131,28 @@ var bool traded_today = false
 if timeframe.change("D")
     traded_today := false
 
-// Live touch warnings (intra-bar, fires immediately when band is pierced)
-live_long_touch  = in_window and not traded_today and not na(lower5) and
-                   (l3 <= lower5) and ((vwap5 - lower5) >= min_band_pt)
+// Pre-compute named sub-conditions (Pine Script doesn't allow // comments
+// inside multi-line boolean expressions — split into variables instead)
+band_ok_lower = not na(lower5) and (vwap5 - lower5) >= min_band_pt
+band_ok_upper = not na(upper5) and (upper5 - vwap5) >= min_band_pt
 
-live_short_touch = in_window and not traded_today and not na(upper5) and
-                   (h3 >= upper5) and ((upper5 - vwap5) >= min_band_pt)
+swept_lower   = l3 <= lower5
+swept_upper   = h3 >= upper5
+closed_above  = c3 > lower5
+closed_below  = c3 < upper5
+bullish_3m    = c3 > o3
+bearish_3m    = c3 < o3
+big_enough    = crange3 >= min_crange
+long_wick_ok  = down_wick3 >= crange3 * wick_pct
+short_wick_ok = up_wick3   >= crange3 * wick_pct
+
+// Live touch warnings (intra-bar, fires immediately when band is pierced)
+live_long_touch  = in_window and not traded_today and band_ok_lower and swept_lower
+live_short_touch = in_window and not traded_today and band_ok_upper and swept_upper
 
 // Qualified bar-close signals (fires on 3m BAR CLOSE — the trigger)
-qual_long = in_window and not traded_today and not na(lower5) and
-            ((vwap5 - lower5) >= min_band_pt) and      // 5m band is wide enough
-            (l3 <= lower5) and                          // 3m candle swept the lower band
-            (c3 > lower5) and                           // 3m candle closed ABOVE band (rejection)
-            (c3 > o3) and                               // 3m candle is bullish
-            (crange3 >= min_crange) and                 // meaningful candle size
-            (down_wick3 >= crange3 * wick_pct)          // strong rejection wick >= 35%
-
-qual_short = in_window and not traded_today and not na(upper5) and
-             ((upper5 - vwap5) >= min_band_pt) and     // 5m band is wide enough
-             (h3 >= upper5) and                         // 3m candle swept the upper band
-             (c3 < upper5) and                          // 3m candle closed BELOW band (rejection)
-             (c3 < o3) and                              // 3m candle is bearish
-             (crange3 >= min_crange) and                // meaningful candle size
-             (up_wick3 >= crange3 * wick_pct)           // strong rejection wick >= 35%
+qual_long  = in_window and not traded_today and band_ok_lower and swept_lower and closed_above and bullish_3m and big_enough and long_wick_ok
+qual_short = in_window and not traded_today and band_ok_upper and swept_upper and closed_below and bearish_3m and big_enough and short_wick_ok
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 5. ENTRY CALCULATION — 20-Point Adaptive Rule
@@ -310,3 +309,4 @@ alertcondition(live_long_touch or live_short_touch,
 alertcondition(sig_long or sig_short,
      title="NQ MTF Sniper: 3m Signal Confirmed (Bar Close)",
      message="🚀 NQ 3m SNIPER CONFIRMED!\n3m candle swept + rejected the 5m VWAP band.\nEntry: {{plot_0}} | Stop: {{plot_1}}\nTP1 (VWAP — scale 60%): {{plot_2}}\nTP2 (Opposite Band — runner 40%): {{plot_3}}\nMove SL to BE+1 after TP1 hit!")
+
