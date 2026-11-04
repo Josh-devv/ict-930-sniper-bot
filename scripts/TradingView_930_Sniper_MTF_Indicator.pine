@@ -1,0 +1,312 @@
+//@version=6
+indicator("ICT 9:30 Sniper — MTF v3.0 (5m Zone + 3m Trigger)", overlay=true)
+
+// =============================================================================
+// ICT 9:30 VWAP SNIPER — MTF v3.0
+// Strategy: 5-Minute 2.0σ VWAP Bands (the ZONE) + 3-Minute candle (the TRIGGER)
+//
+// WHY THIS WORKS:
+//   The 5m VWAP bands define where institutional absorption is likely.
+//   The 3m candle gives a FASTER confirmation — price sweeps the band and 
+//   rejects within 3 minutes, letting you enter tighter and earlier than 
+//   waiting for the full 5m bar to close.
+//
+// CHART SETUP:
+//   • Add this indicator to your USTEC or NQ1! chart on the 3-MINUTE timeframe
+//   • OR add it on a 5m chart — it fetches 3m data internally via request.security()
+//   • Set min_band_pt = 12.0 for USTEC/CFD, or 15.0 for NQ1! Futures
+//
+// ALERTS TO SET IN TRADINGVIEW:
+//   Alert 1: "NQ Early Warning: Band Touched (Live)"       → Once Per Bar
+//   Alert 2: "NQ MTF Sniper: 3m Signal Confirmed"          → Once Per Bar Close
+// =============================================================================
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 1. INPUTS
+// ─────────────────────────────────────────────────────────────────────────────
+tz = "America/New_York"
+
+grp_entry = "Execution Mode & 20-Point Adaptive Rule"
+entry_mode = input.string(
+     "Smart Adaptive (20-Pt Rule)", "Entry Mode",
+     options=["Smart Adaptive (20-Pt Rule)", "Direct Market at Close", "50% Wick Limit (Sealed)"],
+     group=grp_entry,
+     tooltip="Smart Adaptive: If 3m candle range <= 20 pts → Market at Close. If > 20 pts → 50% Wick Limit.")
+adaptive_thresh = input.float(20.0, "Max Candle Range for Market Entry (pts)", minval=10.0, step=1.0, group=grp_entry)
+
+grp_vwap = "5m Anchored VWAP & Band Parameters"
+vwap_mult   = input.float(2.0,  "Band Deviation Multiplier (σ)",          minval=0.5, maxval=4.0, step=0.1, group=grp_vwap)
+min_band_pt = input.float(12.0, "Min Band Distance from VWAP (pts)",      minval=5.0, step=1.0,   group=grp_vwap,
+     tooltip="USTEC/CFD = 12.0 | NQ1! Futures = 15.0")
+
+grp_risk = "Risk & Target Parameters"
+wick_pct    = input.float(0.35, "Min Rejection Wick Ratio (35%)",         minval=0.1, maxval=0.9, step=0.05, group=grp_risk)
+min_crange  = input.float(5.0,  "Min 3m Candle Range (pts)",              minval=2.0, step=1.0,   group=grp_risk)
+stop_buffer = input.float(1.5,  "Stop Loss Buffer beyond Extreme (pts)",  minval=0.5, step=0.5,   group=grp_risk)
+min_stop    = input.float(4.0,  "Min Stop Distance (pts)",                minval=1.0, step=1.0,   group=grp_risk)
+max_stop    = input.float(60.0, "Max Stop Distance (pts)",                minval=10.0, step=5.0,  group=grp_risk)
+min_rr_vwap = input.float(1.5,  "Min Room-to-Run (R:R to VWAP)",         minval=1.0, step=0.1,   group=grp_risk,
+     tooltip="Only take trade if distance to VWAP >= 1.5x your stop. Guarantees reward > risk.")
+
+grp_pos = "Prop Firm MNQ Contract Sizing"
+contracts = input.int(5, "Total MNQ Contracts", minval=1, maxval=20, group=grp_pos,
+     tooltip="5 MNQ = $10/pt total ($2/pt per contract). Sized for $50k challenges.")
+
+grp_time = "Session Window"
+// 9:30 AM – 11:30 AM NY (the ICT kill zone window)
+in_window = not na(time("5", "0930-1130", tz))
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 2. 5-MINUTE ANCHORED VWAP (Daily 9:30 AM Anchor)
+//    Always computed on 5m data regardless of which chart TF you're viewing.
+//    This is the ZONE — where institutional participants are defending price.
+// ─────────────────────────────────────────────────────────────────────────────
+[o5, h5, l5, c5, v5, t5] = request.security(syminfo.tickerid, "5",
+     [open, high, low, close, volume, time],
+     lookahead=barmerge.lookahead_off)
+
+// Detect the 9:30 bar on the 5m feed
+is_930_5m = not na(time("5", "0930-0931", tz))
+
+var float cum_vol5  = na
+var float cum_pv5   = na
+var float cum_pv25  = na
+var float vwap5     = na
+var float upper5    = na
+var float lower5    = na
+
+tp5 = (h5 + l5 + c5) / 3.0
+
+if is_930_5m and (na(cum_vol5) or timeframe.change("D"))
+    cum_vol5 := v5
+    cum_pv5  := tp5 * v5
+    cum_pv25 := tp5 * tp5 * v5
+    vwap5    := tp5
+    upper5   := tp5
+    lower5   := tp5
+else if not na(cum_vol5)
+    cum_vol5 += v5
+    cum_pv5  += tp5 * v5
+    cum_pv25 += tp5 * tp5 * v5
+    vwap5    := cum_pv5 / cum_vol5
+    var5      = math.max(0.0, cum_pv25 / cum_vol5 - vwap5 * vwap5)
+    std5      = math.sqrt(var5)
+    upper5   := vwap5 + vwap_mult * std5
+    lower5   := vwap5 - vwap_mult * std5
+
+// Plot the 5m VWAP bands on the chart (they appear as smooth lines)
+p_vwap  = plot(vwap5, "5m Session VWAP (TP1)",      color=color.new(color.orange, 10), linewidth=2)
+p_upper = plot(upper5, "5m Upper Band (+2.0σ)",      color=color.new(color.red, 25),    linewidth=2)
+p_lower = plot(lower5, "5m Lower Band (-2.0σ)",      color=color.new(color.lime, 25),   linewidth=2)
+fill(p_upper, p_lower, color=color.new(color.blue, 93), title="5m VWAP Band Fill")
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 3. 3-MINUTE CANDLE TRIGGER DATA
+//    Fetch 3m OHLCV — these are the candles we use to detect FAST rejection.
+//    WHY 3m? A 3m candle closes 2 minutes before the 5m bar — you get the same 
+//    signal earlier, with a tighter stop (the wick is usually smaller).
+// ─────────────────────────────────────────────────────────────────────────────
+[o3, h3, l3, c3, v3] = request.security(syminfo.tickerid, "3",
+     [open, high, low, close, volume],
+     lookahead=barmerge.lookahead_off)
+
+// 3m candle metrics
+crange3    = h3 - l3
+up_wick3   = h3 - math.max(o3, c3)   // wick above the body
+down_wick3 = math.min(o3, c3) - l3   // wick below the body
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 4. SIGNAL LOGIC — 3m Candle Sweeps 5m Band then Rejects
+//
+// LONG Setup (Bullish Reversal):
+//   • 3m candle low dips BELOW 5m lower band      (manipulation sweep — liquidity taken)
+//   • 3m candle closes ABOVE the lower band        (rejection — smart money absorbed)
+//   • 3m candle is bullish (close > open)          (institutional demand wins)
+//   • Down wick >= 35% of candle range             (significant rejection tail)
+//   • 5m band has minimum width (not too tight)    (meaningful statistical zone)
+//
+// SHORT Setup (mirror logic on upper band)
+// ─────────────────────────────────────────────────────────────────────────────
+var bool traded_today = false
+if timeframe.change("D")
+    traded_today := false
+
+// Live touch warnings (intra-bar, fires immediately when band is pierced)
+live_long_touch  = in_window and not traded_today and not na(lower5) and
+                   (l3 <= lower5) and ((vwap5 - lower5) >= min_band_pt)
+
+live_short_touch = in_window and not traded_today and not na(upper5) and
+                   (h3 >= upper5) and ((upper5 - vwap5) >= min_band_pt)
+
+// Qualified bar-close signals (fires on 3m BAR CLOSE — the trigger)
+qual_long = in_window and not traded_today and not na(lower5) and
+            ((vwap5 - lower5) >= min_band_pt) and      // 5m band is wide enough
+            (l3 <= lower5) and                          // 3m candle swept the lower band
+            (c3 > lower5) and                           // 3m candle closed ABOVE band (rejection)
+            (c3 > o3) and                               // 3m candle is bullish
+            (crange3 >= min_crange) and                 // meaningful candle size
+            (down_wick3 >= crange3 * wick_pct)          // strong rejection wick >= 35%
+
+qual_short = in_window and not traded_today and not na(upper5) and
+             ((upper5 - vwap5) >= min_band_pt) and     // 5m band is wide enough
+             (h3 >= upper5) and                         // 3m candle swept the upper band
+             (c3 < upper5) and                          // 3m candle closed BELOW band (rejection)
+             (c3 < o3) and                              // 3m candle is bearish
+             (crange3 >= min_crange) and                // meaningful candle size
+             (up_wick3 >= crange3 * wick_pct)           // strong rejection wick >= 35%
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 5. ENTRY CALCULATION — 20-Point Adaptive Rule
+//    Small candle (<= 20 pts): Enter at Market Close — never miss the trade
+//    Large candle (> 20 pts):  Enter at 50% Wick Limit — get a better fill
+// ─────────────────────────────────────────────────────────────────────────────
+var float long_entry  = na
+var float long_stop   = na
+var float long_tp1    = na
+var float long_tp2    = na
+var string long_type  = ""
+
+var float short_entry = na
+var float short_stop  = na
+var float short_tp1   = na
+var float short_tp2   = na
+var string short_type = ""
+
+var bool sig_long  = false
+var bool sig_short = false
+
+sig_long  := false
+sig_short := false
+
+if qual_long
+    bool use_market = (entry_mode == "Direct Market at Close") or
+                      (entry_mode == "Smart Adaptive (20-Pt Rule)" and crange3 <= adaptive_thresh)
+    long_entry := use_market ? c3 : (l3 + 0.50 * down_wick3)
+    long_type  := use_market ? "BUY MARKET (3m Close)" : "BUY LIMIT (50% Wick)"
+    long_stop  := l3 - stop_buffer
+    long_risk   = long_entry - long_stop
+    long_tp1   := vwap5     // TP1 = Session VWAP (mean reversion target)
+    long_tp2   := upper5    // TP2 = Opposite band (full extension target)
+
+    // Only fire if risk/reward is acceptable
+    if long_risk >= min_stop and long_risk <= max_stop and (long_tp1 - long_entry) >= long_risk * min_rr_vwap
+        sig_long    := true
+        traded_today := true
+
+if qual_short
+    bool use_market = (entry_mode == "Direct Market at Close") or
+                      (entry_mode == "Smart Adaptive (20-Pt Rule)" and crange3 <= adaptive_thresh)
+    short_entry := use_market ? c3 : (h3 - 0.50 * up_wick3)
+    short_type  := use_market ? "SELL MARKET (3m Close)" : "SELL LIMIT (50% Wick)"
+    short_stop  := h3 + stop_buffer
+    short_risk   = short_stop - short_entry
+    short_tp1   := vwap5    // TP1 = Session VWAP
+    short_tp2   := lower5   // TP2 = Opposite lower band
+
+    if short_risk >= min_stop and short_risk <= max_stop and (short_entry - short_tp1) >= short_risk * min_rr_vwap
+        sig_short   := true
+        traded_today := true
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 6. ON-CHART VISUALS
+// ─────────────────────────────────────────────────────────────────────────────
+var line l_en  = na
+var line l_sl  = na
+var line l_tp1 = na
+var line l_tp2 = na
+
+if sig_long
+    line.delete(l_en)
+    line.delete(l_sl)
+    line.delete(l_tp1)
+    line.delete(l_tp2)
+
+    l_en  := line.new(bar_index, long_entry, bar_index + 20, long_entry, color=color.aqua,   linewidth=2, style=line.style_dashed)
+    l_sl  := line.new(bar_index, long_stop,  bar_index + 20, long_stop,  color=color.red,    linewidth=2)
+    l_tp1 := line.new(bar_index, long_tp1,   bar_index + 20, long_tp1,   color=color.orange, linewidth=2)
+    l_tp2 := line.new(bar_index, long_tp2,   bar_index + 20, long_tp2,   color=color.green,  linewidth=2, style=line.style_dotted)
+
+    float rk_pts  = long_entry - long_stop
+    float tp1_pts = long_tp1 - long_entry
+    float tp2_pts = long_tp2 - long_entry
+    float tp1_usd = tp1_pts * 3 * 2   // 3 MNQ at TP1 ($2/pt each)
+    float tp2_usd = tp2_pts * 2 * 2   // 2 MNQ runner at TP2
+    float rk_usd  = rk_pts * contracts * 2
+
+    label.new(bar_index + 1, long_entry,
+         long_type + ": " + str.tostring(long_entry, "#.25"),
+         color=color.aqua, textcolor=color.black, style=label.style_label_right, size=size.small)
+    label.new(bar_index + 1, long_stop,
+         "STOP: " + str.tostring(long_stop, "#.25") + "  (-" + str.tostring(rk_pts, "#.1") + " pts / -$" + str.tostring(rk_usd, "#") + ")",
+         color=color.red, textcolor=color.white, style=label.style_label_right, size=size.small)
+    label.new(bar_index + 1, long_tp1,
+         "TP1 (60%→BE): " + str.tostring(long_tp1, "#.25") + "  (+" + str.tostring(tp1_pts, "#.1") + " pts / +$" + str.tostring(tp1_usd, "#") + ")",
+         color=color.orange, textcolor=color.white, style=label.style_label_right, size=size.small)
+    label.new(bar_index + 1, long_tp2,
+         "TP2 Runner: " + str.tostring(long_tp2, "#.25") + "  (+" + str.tostring(tp2_pts, "#.1") + " pts / +$" + str.tostring(tp2_usd, "#") + ")",
+         color=color.green, textcolor=color.white, style=label.style_label_right, size=size.small)
+
+if sig_short
+    line.delete(l_en)
+    line.delete(l_sl)
+    line.delete(l_tp1)
+    line.delete(l_tp2)
+
+    l_en  := line.new(bar_index, short_entry, bar_index + 20, short_entry, color=color.aqua,   linewidth=2, style=line.style_dashed)
+    l_sl  := line.new(bar_index, short_stop,  bar_index + 20, short_stop,  color=color.red,    linewidth=2)
+    l_tp1 := line.new(bar_index, short_tp1,   bar_index + 20, short_tp1,   color=color.orange, linewidth=2)
+    l_tp2 := line.new(bar_index, short_tp2,   bar_index + 20, short_tp2,   color=color.green,  linewidth=2, style=line.style_dotted)
+
+    float rk_pts  = short_stop - short_entry
+    float tp1_pts = short_entry - short_tp1
+    float tp2_pts = short_entry - short_tp2
+    float tp1_usd = tp1_pts * 3 * 2
+    float tp2_usd = tp2_pts * 2 * 2
+    float rk_usd  = rk_pts * contracts * 2
+
+    label.new(bar_index + 1, short_entry,
+         short_type + ": " + str.tostring(short_entry, "#.25"),
+         color=color.aqua, textcolor=color.black, style=label.style_label_right, size=size.small)
+    label.new(bar_index + 1, short_stop,
+         "STOP: " + str.tostring(short_stop, "#.25") + "  (-" + str.tostring(rk_pts, "#.1") + " pts / -$" + str.tostring(rk_usd, "#") + ")",
+         color=color.red, textcolor=color.white, style=label.style_label_right, size=size.small)
+    label.new(bar_index + 1, short_tp1,
+         "TP1 (60%→BE): " + str.tostring(short_tp1, "#.25") + "  (+" + str.tostring(tp1_pts, "#.1") + " pts / +$" + str.tostring(tp1_usd, "#") + ")",
+         color=color.orange, textcolor=color.white, style=label.style_label_right, size=size.small)
+    label.new(bar_index + 1, short_tp2,
+         "TP2 Runner: " + str.tostring(short_tp2, "#.25") + "  (+" + str.tostring(tp2_pts, "#.1") + " pts / +$" + str.tostring(tp2_usd, "#") + ")",
+         color=color.green, textcolor=color.white, style=label.style_label_right, size=size.small)
+
+// Signal arrows
+plotshape(sig_long,  "NQ Long  (3m Trigger)", shape.triangleup,   location.belowbar, color=color.lime,  size=size.large,  text="BUY 3m")
+plotshape(sig_short, "NQ Short (3m Trigger)", shape.triangledown, location.abovebar, color=color.red,   size=size.large,  text="SELL 3m")
+barcolor(sig_long ? color.yellow : sig_short ? color.fuchsia : na)
+
+// Early warning dots (live touch, before bar close)
+plotshape(live_long_touch  and not sig_long,  "Live Long Touch",  shape.circle, location.belowbar, color=color.new(color.lime, 50), size=size.small)
+plotshape(live_short_touch and not sig_short, "Live Short Touch", shape.circle, location.abovebar, color=color.new(color.red,  50), size=size.small)
+
+// Hidden plots for TradingView alert {{plot}} variables
+plot(sig_long ? long_entry  : sig_short ? short_entry : na, "Entry",  display=display.none)
+plot(sig_long ? long_stop   : sig_short ? short_stop  : na, "Stop",   display=display.none)
+plot(sig_long ? long_tp1    : sig_short ? short_tp1   : na, "TP1",    display=display.none)
+plot(sig_long ? long_tp2    : sig_short ? short_tp2   : na, "TP2",    display=display.none)
+plot(vwap5,  "VWAP Value",  display=display.none)
+plot(upper5, "Upper Band",  display=display.none)
+plot(lower5, "Lower Band",  display=display.none)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 7. TRADINGVIEW ALERTS
+//    Set Alert 1 as "Once Per Bar" (fires when price first touches band)
+//    Set Alert 2 as "Once Per Bar Close" (fires only after 3m candle confirms)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ALERT 1: LIVE BAND TOUCH — fires immediately when 3m candle sweeps the band
+alertcondition(live_long_touch or live_short_touch,
+     title="NQ Early Warning: 5m Band Touched (3m Live)",
+     message="⚡ NQ LIVE TOUCH — 5m VWAP BAND SWEPT!\nPrice is absorbing at the 2.0σ zone RIGHT NOW.\nWatch for 3m candle rejection close.\nIf 3m range <= 20 pts — prepare MARKET entry at close.\nIf 3m range > 20 pts — prepare 50% WICK LIMIT inside the tail.\nVWAP: {{plot_4}} | Upper: {{plot_5}} | Lower: {{plot_6}}")
+
+// ALERT 2: CONFIRMED 3m SIGNAL — fires after 3m bar closes with full rejection
+alertcondition(sig_long or sig_short,
+     title="NQ MTF Sniper: 3m Signal Confirmed (Bar Close)",
+     message="🚀 NQ 3m SNIPER CONFIRMED!\n3m candle swept + rejected the 5m VWAP band.\nEntry: {{plot_0}} | Stop: {{plot_1}}\nTP1 (VWAP — scale 60%): {{plot_2}}\nTP2 (Opposite Band — runner 40%): {{plot_3}}\nMove SL to BE+1 after TP1 hit!")
