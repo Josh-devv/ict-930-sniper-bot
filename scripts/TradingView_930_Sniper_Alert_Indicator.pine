@@ -1,0 +1,139 @@
+//@version=6
+indicator("ICT 9:30 Sniper — MNQ Indicator (Alert Edition)", overlay=true)
+
+// =============================================================================
+// 1. INPUTS & SIZING PARAMETERS
+// =============================================================================
+tz = "America/New_York"
+
+grp_vwap = "Anchored VWAP & Band Parameters"
+vwap_mult   = input.float(2.0,  "Band Deviation Multiplier (σ)", minval=0.5, maxval=4.0, step=0.1, group=grp_vwap)
+min_band_pt = input.float(15.0, "Min Band Distance from VWAP (pts)", minval=5.0, step=1.0, group=grp_vwap)
+
+grp_risk = "Risk & Target Parameters"
+wick_pct    = input.float(0.35, "Min Rejection Wick Ratio (35%)", minval=0.1, maxval=0.9, step=0.05, group=grp_risk)
+min_crange  = input.float(6.0,  "Min Candle Range (pts)", minval=2.0, step=1.0, group=grp_risk)
+stop_buffer = input.float(1.5,  "Stop Loss Buffer below Low (pts)", minval=0.5, step=0.5, group=grp_risk)
+rr_tp1      = input.float(1.5,  "TP1 Reward-to-Risk Multiplier", minval=1.0, step=0.1, group=grp_risk)
+rr_tp2      = input.float(3.0,  "TP2 Reward-to-Risk Multiplier", minval=2.0, step=0.5, group=grp_risk)
+
+grp_time = "Execution Window (NY Time)"
+start_hour = input.int(9,  "Start Hour (NY)", group=grp_time)
+start_min  = input.int(30, "Start Minute (NY)", group=grp_time)
+end_hour   = input.int(11, "End Hour (NY)", group=grp_time)
+end_min    = input.int(0,  "End Minute (NY)", group=grp_time)
+
+// =============================================================================
+// 2. SESSION ANCHORED VWAP (Daily 09:30 AM Anchor)
+// =============================================================================
+var float cum_vol  = na
+var float cum_pv   = na
+var float cum_pv2  = na
+var float vwap_val = na
+var float upper_b  = na
+var float lower_b  = na
+
+is_930 = not na(time(timeframe.period, "0930-0931", tz))
+tp_bar = (high + low + close) / 3.0
+
+if is_930 and (na(cum_vol) or timeframe.change("D"))
+    cum_vol  := volume
+    cum_pv   := tp_bar * volume
+    cum_pv2  := tp_bar * tp_bar * volume
+    vwap_val := tp_bar
+    upper_b  := tp_bar
+    lower_b  := tp_bar
+else if not na(cum_vol)
+    cum_vol  += volume
+    cum_pv   += tp_bar * volume
+    cum_pv2  += tp_bar * tp_bar * volume
+    vwap_val := cum_pv / cum_vol
+    variance  = math.max(0.0, cum_pv2 / cum_vol - vwap_val * vwap_val)
+    stdev     = math.sqrt(variance)
+    upper_b  := vwap_val + vwap_mult * stdev
+    lower_b  := vwap_val - vwap_mult * stdev
+
+// Plot bands
+p_vwap  = plot(vwap_val, "Daily 9:30 VWAP", color=color.new(color.orange, 20), width=2)
+p_upper = plot(upper_b,  "Upper Band (+2.0σ)", color=color.new(color.red, 40), width=1)
+p_lower = plot(lower_b,  "Lower Band (-2.0σ)", color=color.new(color.green, 40), width=1)
+fill(p_upper, p_lower, color=color.new(color.blue, 96), title="VWAP Band Fill")
+
+// =============================================================================
+// 3. EXECUTION WINDOW & CONDITIONS
+// =============================================================================
+in_window = not na(time(timeframe.period, "0930-1100", tz)) and not na(vwap_val)
+
+var bool traded_today = false
+if timeframe.change("D")
+    traded_today := false
+
+crange    = high - low
+down_wick = math.min(open, close) - low
+wick_ratio = crange > 0 ? down_wick / crange : 0.0
+
+// A. LIVE INTRA-BAR TOUCH / EARLY WARNING (Fires immediately when price pierces band)
+live_band_pierce = in_window and not traded_today and not na(lower_b) and (low <= lower_b) and ((vwap_val - lower_b) >= min_band_pt)
+
+// B. CONFIRMED BAR-CLOSE SETUP
+confirmed_long = in_window and not traded_today and not na(lower_b) and 
+                 ((vwap_val - lower_b) >= min_band_pt) and (low <= lower_b) and 
+                 (crange >= min_crange) and (wick_ratio >= wick_pct) and (close > open)
+
+if confirmed_long
+    traded_today := true
+
+// Trade Math
+entry_price = confirmed_long ? (low + 0.50 * down_wick) : na
+stop_price  = confirmed_long ? (low - stop_buffer) : na
+risk_dist   = confirmed_long ? (entry_price - stop_price) : na
+tp1_price   = confirmed_long ? (entry_price + rr_tp1 * risk_dist) : na
+tp2_price   = confirmed_long ? (entry_price + rr_tp2 * risk_dist) : na
+
+// =============================================================================
+// 4. ON-CHART VISUALS (Lines & Labels)
+// =============================================================================
+var line l_entry = na
+var line l_stop  = na
+var line l_tp1   = na
+var line l_tp2   = na
+
+if confirmed_long
+    line.delete(l_entry)
+    line.delete(l_stop)
+    line.delete(l_tp1)
+    line.delete(l_tp2)
+
+    l_entry := line.new(bar_index, entry_price, bar_index + 12, entry_price, color=color.aqua, width=2, style=line.style_dashed)
+    l_stop  := line.new(bar_index, stop_price,  bar_index + 12, stop_price,  color=color.red,  width=2)
+    l_tp1   := line.new(bar_index, tp1_price,   bar_index + 12, tp1_price,   color=color.green, width=2)
+    l_tp2   := line.new(bar_index, tp2_price,   bar_index + 12, tp2_price,   color=color.lime,  width=2, style=line.style_dotted)
+
+    label.new(bar_index + 2, entry_price, "BUY LIMIT: " + str.tostring(entry_price, "#.##"), color=color.aqua, textcolor=color.black, style=label.style_label_right, size=size.small)
+    label.new(bar_index + 2, stop_price,  "STOP: " + str.tostring(stop_price, "#.##"),  color=color.red,  textcolor=color.white, style=label.style_label_right, size=size.small)
+    label.new(bar_index + 2, tp1_price,   "TP1 (1.5R): " + str.tostring(tp1_price, "#.##"), color=color.green, textcolor=color.white, style=label.style_label_right, size=size.small)
+    label.new(bar_index + 2, tp2_price,   "TP2 (3.0R): " + str.tostring(tp2_price, "#.##"), color=color.lime,  textcolor=color.black, style=label.style_label_right, size=size.small)
+
+// Bar highlight & Shapes
+plotshape(confirmed_long, "Confirmed Long Signal", shape.triangleup, location.belowbar, color=color.green, size=size.normal, text="NQ 9:30 BUY")
+barcolor(confirmed_long ? color.yellow : na)
+
+// Hidden plots for alert messages
+plot(entry_price, "Entry Level", display=display.none)
+plot(stop_price,  "Stop Level",  display=display.none)
+plot(tp1_price,   "TP1 Level",   display=display.none)
+plot(tp2_price,   "TP2 Level",   display=display.none)
+
+// =============================================================================
+// 5. TRADINGVIEW NATIVE ALERTS
+// =============================================================================
+
+// ALERT 1: LIVE TOUCH / EARLY WARNING (Set Trigger to: "Once Per Bar" or "Once Per Minute")
+alertcondition(live_band_pierce, 
+     title="NQ Early Warning: VWAP Lower Band Pierced", 
+     message="⚠️ NQ LIVE TOUCH WARNING!\nPrice just swept below the 2.0σ Lower VWAP Band!\nWatch for 5m candle lower wick rejection NOW.\nPrepare your Buy Limit order!")
+
+// ALERT 2: CONFIRMED SETUP (Set Trigger to: "Once Per Bar Close")
+alertcondition(confirmed_long, 
+     title="NQ 9:30 Sniper: Long Entry Confirmed", 
+     message="🚀 NQ 9:30 SNIPER CONFIRMED!\n5m Candle closed with institutional absorption wick.\nPlace Buy Limit in the wick:\nEntry: {{plot_0}}\nStop: {{plot_1}}\nTP1: {{plot_2}}\nTP2: {{plot_3}}")

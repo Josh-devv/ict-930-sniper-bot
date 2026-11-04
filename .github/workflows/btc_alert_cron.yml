@@ -1,4 +1,4 @@
-name: BTC Orderflow Alert Bot
+name: Trading Alerts Bot (BTC & NQ 9:30 Sniper)
 
 on:
   schedule:
@@ -7,7 +7,7 @@ on:
   workflow_dispatch: # Allows manual trigger from GitHub UI
 
 jobs:
-  check-btc-signals:
+  check-signals:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
@@ -21,9 +21,17 @@ jobs:
       - name: Install Dependencies
         run: pip install requests pandas numpy
 
-      - name: Check 5m Absorption Signal & Send Telegram Alert
+      - name: Check BTC 5m Absorption Signal & Send Telegram Alert
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           python scripts/btc_telegram_alert_bot_cron.py
+
+      - name: Check NQ 9:30 VWAP Sniper & Send Telegram Alert
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python scripts/nq_telegram_alert_bot_cron.py
+
