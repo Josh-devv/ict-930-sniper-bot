@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8290114978:AAETL_UeHqbu8r4n2jHvDXxW-VKuEnvyp0c")
 TELEGRAM_CHAT_ID   = os.getenv("TELEGRAM_CHAT_ID", "5642644592")
 
-SYMBOL   = "BTCUSDT"
+SYMBOL   = "BTC-USDT"   # OKX format (matches your TradingView chart)
 INTERVAL = "5m"
 VOL_MULT = 1.3
 WICK_MIN = 0.30
@@ -47,23 +47,31 @@ def check_latest_candle():
         print("Outside active trading sessions (London/NY). No check needed.")
         return
 
-    url = f"https://api.binance.com/api/v3/klines?symbol={SYMBOL}&interval={INTERVAL}&limit=40"
+    # OKX API — matches your TradingView chart data source
+    url = f"https://www.okx.com/api/v5/market/candles?instId={SYMBOL}&bar={INTERVAL}&limit=40"
     r = requests.get(url, timeout=10)
     if r.status_code != 200:
-        print("Failed to fetch klines from Binance")
+        print("Failed to fetch klines from OKX")
         return
 
-    data = r.json()
-    df = pd.DataFrame(data, columns=[
+    raw = r.json().get("data", [])
+    # OKX returns newest first — reverse to get chronological order
+    raw = list(reversed(raw))
+    df = pd.DataFrame(raw, columns=[
         'open_time', 'open', 'high', 'low', 'close', 'volume',
-        'close_time', 'quote_volume', 'trades', 'tb_base', 'tb_quote', 'ignore'
+        'quote_volume', 'confirm'
     ])
     for col in ['open', 'high', 'low', 'close', 'volume']:
         df[col] = df[col].astype(float)
 
-    # Closed candle is second to last
+    # Closed candle is second to last (last candle may still be live)
     closed_candle = df.iloc[-2]
-    now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+    # Show time in NY (UTC-5 in Nov, EST)
+    from zoneinfo import ZoneInfo
+    ny_tz = ZoneInfo("America/New_York")
+    now_ny = datetime.now(timezone.utc).astimezone(ny_tz)
+    now_str = now_ny.strftime("%Y-%m-%d %H:%M NY")
 
     vol_series = df['volume'].iloc[:-1]
     vol_ma = vol_series.rolling(20).mean().iloc[-1]
@@ -91,8 +99,8 @@ def check_latest_candle():
 
             alert_text = (
                 f"🚀 <b>BTC ORDERFLOW ABSORPTION BUY!</b>\n\n"
-                f"<b>Time:</b> {now_str}\n"
-                f"<b>Timeframe:</b> 5-Minute\n"
+                f"<b>Time (NY):</b> {now_str}\n"
+                f"<b>Chart:</b> BTCUSDT · 5m · OKX\n"
                 f"----------------------------------------\n"
                 f"🔹 <b>BUY LIMIT (50% Wick):</b> <code>${entry_price:,.2f}</code>\n"
                 f"🔻 <b>STOP LOSS:</b> <code>${stop_price:,.2f}</code> (Risk: ${stop_dist:,.2f})\n"
@@ -110,3 +118,4 @@ def check_latest_candle():
 
 if __name__ == "__main__":
     check_latest_candle()
+
