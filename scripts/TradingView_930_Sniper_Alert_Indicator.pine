@@ -1,27 +1,37 @@
 //@version=6
-indicator("ICT 9:30 Sniper — MNQ Indicator (Alert Edition v2)", overlay=true)
+indicator("ICT 9:30 Sniper — MNQ Production Indicator v2.5", overlay=true)
 
 // =============================================================================
-// 1. INPUTS & PROP FIRM SIZING
+// 1. INPUTS & PROP FIRM CONTRACT SIZING
 // =============================================================================
 tz = "America/New_York"
 
-grp_entry = "Execution Mode"
-entry_mode = input.string("50% Wick Limit (Sealed)", "Entry Mode", options=["50% Wick Limit (Sealed)", "Direct Market at Close", "50/50 Hybrid"], group=grp_entry, tooltip="Sealed strategy uses 50% Wick Limit for maximum R:R. Direct Market enters immediately on bar close so you never miss runners.")
+grp_entry = "Execution Mode & 20-Point Adaptive Rule"
+entry_mode = input.string("Smart Adaptive (20-Pt Rule)", "Entry Mode", 
+     options=["Smart Adaptive (20-Pt Rule)", "Direct Market at Close", "50% Wick Limit (Sealed)"], 
+     group=grp_entry, 
+     tooltip="Smart Adaptive: If candle range <= 20 pts, enters immediately at Market Close (never misses trades). If range > 20 pts, places 50% Wick Limit (protects drawdown).")
+
+adaptive_thresh = input.float(20.0, "Max Candle Range for Market Entry (pts)", minval=10.0, step=1.0, group=grp_entry)
 
 grp_vwap = "Anchored VWAP & Band Parameters"
 vwap_mult   = input.float(2.0,  "Band Deviation Multiplier (σ)", minval=0.5, maxval=4.0, step=0.1, group=grp_vwap)
-min_band_pt = input.float(15.0, "Min Band Distance from VWAP (pts)", minval=5.0, step=1.0, group=grp_vwap, tooltip="At 9:35, if bands are compressed <15 pts from VWAP, trade is skipped to avoid chop.")
+min_band_pt = input.float(12.0, "Min Band Distance from VWAP (pts)", minval=5.0, step=1.0, group=grp_vwap, 
+     tooltip="Set to 12.0 for USTEC / CFD feeds, or 15.0 for CME Futures NQ1!.")
 
 grp_risk = "Risk & Target Parameters (Sealed Rules)"
 wick_pct    = input.float(0.35, "Min Rejection Wick Ratio (35%)", minval=0.1, maxval=0.9, step=0.05, group=grp_risk)
 min_crange  = input.float(6.0,  "Min Candle Range (pts)", minval=2.0, step=1.0, group=grp_risk)
 stop_buffer = input.float(1.5,  "Stop Loss Buffer beyond Extreme (pts)", minval=0.5, step=0.5, group=grp_risk)
-min_stop    = input.float(5.0,  "Min Stop Distance (pts)", minval=1.0, step=1.0, group=grp_risk)
+min_stop    = input.float(4.0,  "Min Stop Distance (pts)", minval=1.0, step=1.0, group=grp_risk)
 max_stop    = input.float(60.0, "Max Stop Distance (pts)", minval=10.0, step=5.0, group=grp_risk)
-min_rr      = input.float(1.5,  "Min R:R to VWAP (TP1)", minval=0.5, step=0.1, group=grp_risk)
+min_rr_vwap = input.float(1.5,  "Min Room-to-Run (R:R to VWAP)", minval=1.0, step=0.1, group=grp_risk,
+     tooltip="Ensures VWAP target is at least 1.5x your risk. Guarantees big point trades and filters out small, low-reward setups.")
 
-grp_time = "Session Window (NY Time)"
+grp_pos = "Prop Firm MNQ Scaling (FundedNext / TopStep)"
+contracts = input.int(5, "Total MNQ Contracts", minval=1, maxval=20, group=grp_pos, tooltip="5 MNQ = $10/pt ($2/pt per contract). Sized for $50k challenges.")
+
+grp_time = "Session Execution Window (NY Time)"
 in_window = not na(time(timeframe.period, "0930-1130", tz))
 
 // =============================================================================
@@ -54,14 +64,14 @@ else if not na(cum_vol)
     upper_b  := vwap_val + vwap_mult * stdev
     lower_b  := vwap_val - vwap_mult * stdev
 
-// Plot bands
-p_vwap  = plot(vwap_val, "Daily 9:30 VWAP (TP1)", color=color.new(color.orange, 10), linewidth=2)
-p_upper = plot(upper_b,  "Upper Band (+2.0σ)",   color=color.new(color.red, 30),    linewidth=1)
-p_lower = plot(lower_b,  "Lower Band (-2.0σ)",   color=color.new(color.green, 30),  linewidth=1)
+// Plot bands on chart
+p_vwap  = plot(vwap_val, "Daily 9:30 VWAP (TP1 Mean)", color=color.new(color.orange, 10), linewidth=2)
+p_upper = plot(upper_b,  "Upper Band (+2.0σ)",          color=color.new(color.red, 30),    linewidth=1)
+p_lower = plot(lower_b,  "Lower Band (-2.0σ)",          color=color.new(color.green, 30),  linewidth=1)
 fill(p_upper, p_lower, color=color.new(color.blue, 96), title="VWAP Band Fill")
 
 // =============================================================================
-// 3. EXECUTION LOGIC (LONG & SHORT)
+// 3. EXECUTION LOGIC (LONG & SHORT REVERSALS)
 // =============================================================================
 var bool traded_today = false
 if timeframe.change("D")
@@ -75,7 +85,7 @@ down_wick = math.min(open, close) - low
 live_touch_lower = in_window and not traded_today and not na(lower_b) and (low <= lower_b) and ((vwap_val - lower_b) >= min_band_pt)
 live_touch_upper = in_window and not traded_today and not na(upper_b) and (high >= upper_b) and ((upper_b - vwap_val) >= min_band_pt)
 
-// B. BAR-CLOSE QUALIFIED SETUPS
+// B. BAR-CLOSE QUALIFIED REJECTIONS
 qual_long  = in_window and not traded_today and not na(lower_b) and 
              ((vwap_val - lower_b) >= min_band_pt) and (low <= lower_b) and 
              (crange >= min_crange) and (down_wick >= crange * wick_pct) and (close > open)
@@ -85,15 +95,17 @@ qual_short = in_window and not traded_today and not na(upper_b) and
              (crange >= min_crange) and (up_wick >= crange * wick_pct) and (close < open)
 
 // Entry Calculation according to selected mode
-var float long_entry  = na
-var float long_stop   = na
-var float long_tp1    = na
-var float long_tp2    = na
+var float long_entry   = na
+var float long_stop    = na
+var float long_tp1     = na
+var float long_tp2     = na
+var string long_type   = ""
 
-var float short_entry = na
-var float short_stop  = na
-var float short_tp1   = na
-var float short_tp2   = na
+var float short_entry  = na
+var float short_stop   = na
+var float short_tp1    = na
+var float short_tp2    = na
+var string short_type  = ""
 
 var bool sig_long  = false
 var bool sig_short = false
@@ -102,34 +114,39 @@ sig_long  := false
 sig_short := false
 
 if qual_long
-    long_entry := entry_mode == "Direct Market at Close" ? close : (low + 0.50 * down_wick)
+    // 20-Point Adaptive Logic
+    bool use_market = (entry_mode == "Direct Market at Close") or (entry_mode == "Smart Adaptive (20-Pt Rule)" and crange <= adaptive_thresh)
+    long_entry := use_market ? close : (low + 0.50 * down_wick)
+    long_type  := use_market ? "BUY MARKET" : "BUY LIMIT"
     long_stop  := low - stop_buffer
     long_risk   = long_entry - long_stop
-    long_tp1   := vwap_val  // SEALED RULE: TP1 IS ANCHORED VWAP
-    long_tp2   := upper_b   // SEALED RULE: TP2 IS OPPOSITE 2.0σ BAND
+    long_tp1   := vwap_val  // Primary target: Session VWAP
+    long_tp2   := upper_b   // Runner target: Opposite Band
     
-    // Validate filters
-    if long_risk >= min_stop and long_risk <= max_stop and (long_tp1 - long_entry) >= long_risk * min_rr
+    // Validate strict filters: Minimum Room-to-Run (>= 1.5x risk to VWAP)
+    if long_risk >= min_stop and long_risk <= max_stop and (long_tp1 - long_entry) >= long_risk * min_rr_vwap
         sig_long := true
         traded_today := true
 
 if qual_short
-    short_entry := entry_mode == "Direct Market at Close" ? close : (high - 0.50 * up_wick)
+    bool use_market = (entry_mode == "Direct Market at Close") or (entry_mode == "Smart Adaptive (20-Pt Rule)" and crange <= adaptive_thresh)
+    short_entry := use_market ? close : (high - 0.50 * up_wick)
+    short_type  := use_market ? "SELL MARKET" : "SELL LIMIT"
     short_stop  := high + stop_buffer
     short_risk   = short_stop - short_entry
-    short_tp1   := vwap_val // SEALED RULE: TP1 IS ANCHORED VWAP
-    short_tp2   := lower_b  // SEALED RULE: TP2 IS OPPOSITE 2.0σ BAND
+    short_tp1   := vwap_val // Primary target: Session VWAP
+    short_tp2   := lower_b  // Runner target: Opposite Band
 
-    // Validate filters
-    if short_risk >= min_stop and short_risk <= max_stop and (short_entry - short_tp1) >= short_risk * min_rr
+    // Validate strict filters: Minimum Room-to-Run (>= 1.5x risk to VWAP)
+    if short_risk >= min_stop and short_risk <= max_stop and (short_entry - short_tp1) >= short_risk * min_rr_vwap
         sig_short := true
         traded_today := true
 
 // =============================================================================
-// 4. ON-CHART VISUALS
+// 4. ON-CHART VISUALS (Lines & Projection Tags)
 // =============================================================================
-var line l_en = na
-var line l_sl = na
+var line l_en  = na
+var line l_sl  = na
 var line l_tp1 = na
 var line l_tp2 = na
 
@@ -139,15 +156,19 @@ if sig_long
     line.delete(l_tp1)
     line.delete(l_tp2)
 
-    l_en  := line.new(bar_index, long_entry, bar_index + 16, long_entry, color=color.aqua, width=2, style=line.style_dashed)
-    l_sl  := line.new(bar_index, long_stop,  bar_index + 16, long_stop,  color=color.red,  width=2)
-    l_tp1 := line.new(bar_index, long_tp1,   bar_index + 16, long_tp1,   color=color.orange, width=2)
-    l_tp2 := line.new(bar_index, long_tp2,   bar_index + 16, long_tp2,   color=color.green,  width=2, style=line.style_dotted)
+    l_en  := line.new(bar_index, long_entry, bar_index + 18, long_entry, color=color.aqua, width=2, style=line.style_dashed)
+    l_sl  := line.new(bar_index, long_stop,  bar_index + 18, long_stop,  color=color.red,  width=2)
+    l_tp1 := line.new(bar_index, long_tp1,   bar_index + 18, long_tp1,   color=color.orange, width=2)
+    l_tp2 := line.new(bar_index, long_tp2,   bar_index + 18, long_tp2,   color=color.green,  width=2, style=line.style_dotted)
 
-    label.new(bar_index + 2, long_entry, (entry_mode == "Direct Market at Close" ? "BUY MKT: " : "BUY LIMIT: ") + str.tostring(long_entry, "#.25"), color=color.aqua, textcolor=color.black, style=label.style_label_right, size=size.small)
-    label.new(bar_index + 2, long_stop,  "STOP: " + str.tostring(long_stop, "#.25") + " (-" + str.tostring(long_entry - long_stop, "#.1") + " pts)", color=color.red,  textcolor=color.white, style=label.style_label_right, size=size.small)
-    label.new(bar_index + 2, long_tp1,   "TP1 (VWAP Mean): " + str.tostring(long_tp1, "#.25"), color=color.orange, textcolor=color.white, style=label.style_label_right, size=size.small)
-    label.new(bar_index + 2, long_tp2,   "TP2 (Opposite Band): " + str.tostring(long_tp2, "#.25"), color=color.green, textcolor=color.white, style=label.style_label_right, size=size.small)
+    float rk_pts = long_entry - long_stop
+    float tp1_pts = long_tp1 - long_entry
+    float tp2_pts = long_tp2 - long_entry
+
+    label.new(bar_index + 2, long_entry, long_type + ": " + str.tostring(long_entry, "#.25"), color=color.aqua, textcolor=color.black, style=label.style_label_right, size=size.small)
+    label.new(bar_index + 2, long_stop,  "STOP: " + str.tostring(long_stop, "#.25") + " (-" + str.tostring(rk_pts, "#.1") + " pts / -$" + str.tostring(rk_pts * contracts * 2, "#") + ")", color=color.red, textcolor=color.white, style=label.style_label_right, size=size.small)
+    label.new(bar_index + 2, long_tp1,   "TP1 (60% VWAP): " + str.tostring(long_tp1, "#.25") + " (+" + str.tostring(tp1_pts, "#.1") + " pts / +$" + str.tostring(tp1_pts * 3 * 2, "#") + ")", color=color.orange, textcolor=color.white, style=label.style_label_right, size=size.small)
+    label.new(bar_index + 2, long_tp2,   "TP2 (40% Runner): " + str.tostring(long_tp2, "#.25") + " (+" + str.tostring(tp2_pts, "#.1") + " pts / +$" + str.tostring(tp2_pts * 2 * 2, "#") + ")", color=color.green, textcolor=color.white, style=label.style_label_right, size=size.small)
 
 if sig_short
     line.delete(l_en)
@@ -155,15 +176,19 @@ if sig_short
     line.delete(l_tp1)
     line.delete(l_tp2)
 
-    l_en  := line.new(bar_index, short_entry, bar_index + 16, short_entry, color=color.aqua, width=2, style=line.style_dashed)
-    l_sl  := line.new(bar_index, short_stop,  bar_index + 16, short_stop,  color=color.red,  width=2)
-    l_tp1 := line.new(bar_index, short_tp1,   bar_index + 16, short_tp1,   color=color.orange, width=2)
-    l_tp2 := line.new(bar_index, short_tp2,   bar_index + 16, short_tp2,   color=color.green,  width=2, style=line.style_dotted)
+    l_en  := line.new(bar_index, short_entry, bar_index + 18, short_entry, color=color.aqua, width=2, style=line.style_dashed)
+    l_sl  := line.new(bar_index, short_stop,  bar_index + 18, short_stop,  color=color.red,  width=2)
+    l_tp1 := line.new(bar_index, short_tp1,   bar_index + 18, short_tp1,   color=color.orange, width=2)
+    l_tp2 := line.new(bar_index, short_tp2,   bar_index + 18, short_tp2,   color=color.green,  width=2, style=line.style_dotted)
 
-    label.new(bar_index + 2, short_entry, (entry_mode == "Direct Market at Close" ? "SELL MKT: " : "SELL LIMIT: ") + str.tostring(short_entry, "#.25"), color=color.aqua, textcolor=color.black, style=label.style_label_right, size=size.small)
-    label.new(bar_index + 2, short_stop,  "STOP: " + str.tostring(short_stop, "#.25") + " (-" + str.tostring(short_stop - short_entry, "#.1") + " pts)", color=color.red, textcolor=color.white, style=label.style_label_right, size=size.small)
-    label.new(bar_index + 2, short_tp1,   "TP1 (VWAP Mean): " + str.tostring(short_tp1, "#.25"), color=color.orange, textcolor=color.white, style=label.style_label_right, size=size.small)
-    label.new(bar_index + 2, short_tp2,   "TP2 (Opposite Band): " + str.tostring(short_tp2, "#.25"), color=color.green, textcolor=color.white, style=label.style_label_right, size=size.small)
+    float rk_pts = short_stop - short_entry
+    float tp1_pts = short_entry - short_tp1
+    float tp2_pts = short_entry - short_tp2
+
+    label.new(bar_index + 2, short_entry, short_type + ": " + str.tostring(short_entry, "#.25"), color=color.aqua, textcolor=color.black, style=label.style_label_right, size=size.small)
+    label.new(bar_index + 2, short_stop,  "STOP: " + str.tostring(short_stop, "#.25") + " (-" + str.tostring(rk_pts, "#.1") + " pts / -$" + str.tostring(rk_pts * contracts * 2, "#") + ")", color=color.red, textcolor=color.white, style=label.style_label_right, size=size.small)
+    label.new(bar_index + 2, short_tp1,   "TP1 (60% VWAP): " + str.tostring(short_tp1, "#.25") + " (+" + str.tostring(tp1_pts, "#.1") + " pts / +$" + str.tostring(tp1_pts * 3 * 2, "#") + ")", color=color.orange, textcolor=color.white, style=label.style_label_right, size=size.small)
+    label.new(bar_index + 2, short_tp2,   "TP2 (40% Runner): " + str.tostring(short_tp2, "#.25") + " (+" + str.tostring(tp2_pts, "#.1") + " pts / +$" + str.tostring(tp2_pts * 2 * 2, "#") + ")", color=color.green, textcolor=color.white, style=label.style_label_right, size=size.small)
 
 plotshape(sig_long,  "NQ Long Signal",  shape.triangleup,   location.belowbar, color=color.green, size=size.normal, text="NQ BUY")
 plotshape(sig_short, "NQ Short Signal", shape.triangledown, location.abovebar, color=color.red,   size=size.normal, text="NQ SELL")
@@ -176,12 +201,15 @@ plot(sig_long ? long_tp1   : (sig_short ? short_tp1   : na), "TP1 Level",   disp
 plot(sig_long ? long_tp2   : (sig_short ? short_tp2   : na), "TP2 Level",   display=display.none)
 
 // =============================================================================
-// 5. TRADINGVIEW ALERTS
+// 5. TRADINGVIEW NATIVE ALERTS
 // =============================================================================
+
+// ALERT 1: LIVE TOUCH / EARLY WARNING (Trigger: "Once Per Bar")
 alertcondition(live_touch_lower or live_touch_upper, 
      title="NQ Early Warning: Band Pierced (Live Touch)", 
-     message="⚠️ NQ LIVE TOUCH WARNING!\nPrice just swept the 2.0σ VWAP Band!\nWatch for 5m candle wick rejection NOW.")
+     message="⚠️ NQ LIVE TOUCH WARNING!\nPrice just swept the 2.0σ VWAP Band!\nWatch for 5m candle wick rejection NOW.\nCheck if candle range is <= 20 pts for Market Entry.")
 
+// ALERT 2: CONFIRMED SETUP (Trigger: "Once Per Bar Close")
 alertcondition(sig_long or sig_short, 
      title="NQ 9:30 Sniper: Signal Confirmed (Bar Close)", 
-     message="🚀 NQ 9:30 SNIPER CONFIRMED!\nSetup closed with rejection wick.\nEntry: {{plot_0}}\nStop: {{plot_1}}\nTP1 (VWAP): {{plot_2}}\nTP2 (Opposite Band): {{plot_3}}")
+     message="🚀 NQ 9:30 SNIPER CONFIRMED!\nSetup confirmed with 1.5R+ room to VWAP.\nEntry: {{plot_0}}\nStop: {{plot_1}}\nTP1 (VWAP Mean): {{plot_2}}\nTP2 (Opposite Band): {{plot_3}}\nScale 60% at TP1, move SL to BE+1!")
