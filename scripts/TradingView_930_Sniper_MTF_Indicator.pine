@@ -220,10 +220,10 @@ if sig_long
     line.delete(l_tp1)
     line.delete(l_tp2)
 
-    l_en  := line.new(bar_index, long_entry, bar_index + 20, long_entry, color=color.aqua,   linewidth=2, style=line.style_dashed)
-    l_sl  := line.new(bar_index, long_stop,  bar_index + 20, long_stop,  color=color.red,    linewidth=2)
-    l_tp1 := line.new(bar_index, long_tp1,   bar_index + 20, long_tp1,   color=color.orange, linewidth=2)
-    l_tp2 := line.new(bar_index, long_tp2,   bar_index + 20, long_tp2,   color=color.green,  linewidth=2, style=line.style_dotted)
+    l_en  := line.new(bar_index, long_entry, bar_index + 20, long_entry, color=color.aqua,   width=2, style=line.style_dashed)
+    l_sl  := line.new(bar_index, long_stop,  bar_index + 20, long_stop,  color=color.red,    width=2)
+    l_tp1 := line.new(bar_index, long_tp1,   bar_index + 20, long_tp1,   color=color.orange, width=2)
+    l_tp2 := line.new(bar_index, long_tp2,   bar_index + 20, long_tp2,   color=color.green,  width=2, style=line.style_dotted)
 
     float rk_pts  = long_entry - long_stop
     float tp1_pts = long_tp1 - long_entry
@@ -251,10 +251,10 @@ if sig_short
     line.delete(l_tp1)
     line.delete(l_tp2)
 
-    l_en  := line.new(bar_index, short_entry, bar_index + 20, short_entry, color=color.aqua,   linewidth=2, style=line.style_dashed)
-    l_sl  := line.new(bar_index, short_stop,  bar_index + 20, short_stop,  color=color.red,    linewidth=2)
-    l_tp1 := line.new(bar_index, short_tp1,   bar_index + 20, short_tp1,   color=color.orange, linewidth=2)
-    l_tp2 := line.new(bar_index, short_tp2,   bar_index + 20, short_tp2,   color=color.green,  linewidth=2, style=line.style_dotted)
+    l_en  := line.new(bar_index, short_entry, bar_index + 20, short_entry, color=color.aqua,   width=2, style=line.style_dashed)
+    l_sl  := line.new(bar_index, short_stop,  bar_index + 20, short_stop,  color=color.red,    width=2)
+    l_tp1 := line.new(bar_index, short_tp1,   bar_index + 20, short_tp1,   color=color.orange, width=2)
+    l_tp2 := line.new(bar_index, short_tp2,   bar_index + 20, short_tp2,   color=color.green,  width=2, style=line.style_dotted)
 
     float rk_pts  = short_stop - short_entry
     float tp1_pts = short_entry - short_tp1
