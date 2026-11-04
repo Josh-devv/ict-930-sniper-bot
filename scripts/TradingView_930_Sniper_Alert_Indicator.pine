@@ -54,9 +54,9 @@ else if not na(cum_vol)
     lower_b  := vwap_val - vwap_mult * stdev
 
 // Plot bands
-p_vwap  = plot(vwap_val, "Daily 9:30 VWAP", color=color.new(color.orange, 20), width=2)
-p_upper = plot(upper_b,  "Upper Band (+2.0σ)", color=color.new(color.red, 40), width=1)
-p_lower = plot(lower_b,  "Lower Band (-2.0σ)", color=color.new(color.green, 40), width=1)
+p_vwap  = plot(vwap_val, "Daily 9:30 VWAP", color=color.new(color.orange, 20), linewidth=2)
+p_upper = plot(upper_b,  "Upper Band (+2.0σ)", color=color.new(color.red, 40), linewidth=1)
+p_lower = plot(lower_b,  "Lower Band (-2.0σ)", color=color.new(color.green, 40), linewidth=1)
 fill(p_upper, p_lower, color=color.new(color.blue, 96), title="VWAP Band Fill")
 
 // =============================================================================
@@ -137,3 +137,4 @@ alertcondition(live_band_pierce,
 alertcondition(confirmed_long, 
      title="NQ 9:30 Sniper: Long Entry Confirmed", 
      message="🚀 NQ 9:30 SNIPER CONFIRMED!\n5m Candle closed with institutional absorption wick.\nPlace Buy Limit in the wick:\nEntry: {{plot_0}}\nStop: {{plot_1}}\nTP1: {{plot_2}}\nTP2: {{plot_3}}")
+
