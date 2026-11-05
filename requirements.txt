@@ -1,6 +1,7 @@
 backtesting>=0.6.6
 pandas>=2.0.0
 numpy>=1.24.0
+requests>=2.28.0
 matplotlib>=3.8.0
 pytest>=8.0.0
 scipy>=1.11.0
