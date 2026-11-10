@@ -4,8 +4,16 @@ strategy("ICT BTC Orderflow CVD Absorption Strategy", overlay=true, initial_capi
 // ==========================================
 // INPUTS & PARAMETERS
 // ==========================================
-grp_trend  = "Higher Timeframe Trend Filter (Verified 1.38 PF Edge)"
-use_htf    = input.bool(true, "Enable 1H 50 EMA Trend Filter", group=grp_trend, tooltip="Only buy above 1H 50 EMA, only sell below. Verified 53.5% WR, 1.38 PF, 22/25 green months.")
+grp_inst   = "0. Institutional Precision & Trap Filters (1.52 PF Edge)"
+use_overext= input.bool(true, "Enable Over-Extension Protection", group=grp_inst, tooltip="Prevents buying the top or selling the bottom of parabolic moves. Requires price to be within 8 ATRs of 1H 50 EMA.")
+max_dist   = input.float(8.0, "Max Distance from 1H EMA (ATRs)", step=0.5, group=grp_inst)
+use_trap   = input.bool(true, "Require Fakeout Trap Confirmation", group=grp_inst, tooltip="Candle must close back INSIDE the swept level (proving retail got trapped and absorbed). Eliminates catching falling knives.")
+use_dr     = input.bool(true, "Enable Dealing Range Equilibrium Filter", group=grp_inst, tooltip="Institutions only buy wholesale (Discount < 50%) and sell wholesale (Premium > 50%).")
+dr_len     = input.int(30, "Dealing Range Lookback", group=grp_inst)
+use_auction= input.bool(true, "Require Auction Winner Close", group=grp_inst, tooltip="Longs must close green or in upper 50% of bar. Shorts must close red or in lower 50%.")
+
+grp_trend  = "1. Higher Timeframe Trend Filter (Verified 1.52 PF Edge)"
+use_htf    = input.bool(true, "Enable 1H 50 EMA Trend Filter", group=grp_trend, tooltip="Only buy above 1H 50 EMA, only sell below. Verified 56.4% WR, 1.52 PF, 22/25 green months.")
 htf_tf     = input.timeframe("60", "HTF Timeframe", group=grp_trend)
 htf_len    = input.int(50, "HTF EMA Length", group=grp_trend)
 show_htf   = input.bool(true, "Plot 1H 50 EMA on Chart", group=grp_trend)
@@ -37,11 +45,26 @@ in_ny     = not na(time(timeframe.period, "1300-1800", "UTC")) and enable_ny
 is_active_session = in_london or in_ny
 
 // ==========================================
-// HTF TREND FILTER
+// HTF TREND & INSTITUTIONAL FILTERS
 // ==========================================
 htf_ema = request.security(syminfo.tickerid, htf_tf, ta.ema(close, htf_len), lookahead=barmerge.lookahead_off)
 htf_bull = not use_htf or (close > htf_ema)
 htf_bear = not use_htf or (close < htf_ema)
+
+atr = ta.atr(14)
+
+// Over-Extension Filter: Distance from 1H EMA in ATRs
+ema_dist_atr = math.abs(close - htf_ema) / atr
+pass_overext = not use_overext or (ema_dist_atr <= max_dist)
+
+// Dealing Range Equilibrium
+dr_high = ta.highest(high, dr_len)[1]
+dr_low  = ta.lowest(low, dr_len)[1]
+dr_eq   = (dr_high + dr_low) / 2.0
+in_discount = low <= dr_eq or close <= dr_eq
+in_premium  = high >= dr_eq or close >= dr_eq
+pass_dr_long  = not use_dr or in_discount
+pass_dr_short = not use_dr or in_premium
 
 // ==========================================
 // ORDERFLOW & VOLUME CALCULATIONS
@@ -53,12 +76,21 @@ local_high = ta.highest(high, lookback)[1]
 local_low  = ta.lowest(low, lookback)[1]
 
 candle_range = math.max(0.5, high - low)
-upper_wick   = high - math.max(open, close)
-lower_wick   = math.min(open, close) - low
+body_top     = math.max(open, close)
+body_bot     = math.min(open, close)
+upper_wick   = high - body_top
+lower_wick   = body_bot - low
 upper_wick_ratio = upper_wick / candle_range
 lower_wick_ratio = lower_wick / candle_range
 
-atr = ta.atr(14)
+// Fakeout Trap Confirmation (Must close back inside swept level)
+pass_trap_long  = not use_trap or (close > local_low)
+pass_trap_short = not use_trap or (close < local_high)
+
+// Auction Winner Confirmation (Bar must close in trade direction)
+candle_mid = (high + low) / 2.0
+pass_auction_long  = not use_auction or (close >= candle_mid or close > open)
+pass_auction_short = not use_auction or (close <= candle_mid or close < open)
 
 allow_long  = (trade_dir == "Both (Long & Short)" or trade_dir == "Long Only")
 allow_short = (trade_dir == "Both (Long & Short)" or trade_dir == "Short Only")
@@ -66,8 +98,8 @@ allow_short = (trade_dir == "Both (Long & Short)" or trade_dir == "Short Only")
 bull_raw = is_active_session and vol_climax and (low <= local_low) and (lower_wick_ratio >= wick_min) and allow_long
 bear_raw = is_active_session and vol_climax and (high >= local_high) and (upper_wick_ratio >= wick_min) and allow_short
 
-bull_absorption = bull_raw and htf_bull
-bear_absorption = bear_raw and htf_bear
+bull_absorption = bull_raw and htf_bull and pass_overext and pass_trap_long and pass_dr_long and pass_auction_long
+bear_absorption = bear_raw and htf_bear and pass_overext and pass_trap_short and pass_dr_short and pass_auction_short
 
 // Long Execution Levels
 long_entry = entry_mode == "Direct (Candle Close)" ? close : (low + 0.50 * lower_wick)

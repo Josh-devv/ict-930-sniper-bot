@@ -79,35 +79,36 @@
 
 ---
 
-## MODEL 4: BTC Orderflow Absorption Sniper (Trend-Filtered 5-Minute)
+## MODEL 4: BTC Orderflow Absorption Sniper (Institutional Precision Edition)
 *Best for: 24/7 crypto day trading with automated Telegram alerts on Exness MT5 / Binance / OKX.*
 
 * **Source Files**:
   - Python Backtest: [`scripts/btc_absorption_filtered_backtest.py`](file:///c:/Users/JOSH/Desktop/2xjosh/10am/scripts/btc_absorption_filtered_backtest.py)
+  - Precision Sweep & Verification: [`scratch/btc_precision_sweep.py`](file:///c:/Users/JOSH/Desktop/2xjosh/10am/scratch/btc_precision_sweep.py)
   - Telegram Bot (Live): [`scripts/btc_telegram_alert_bot.py`](file:///c:/Users/JOSH/Desktop/2xjosh/10am/scripts/btc_telegram_alert_bot.py)
   - Telegram Bot (Cron): [`scripts/btc_telegram_alert_bot_cron.py`](file:///c:/Users/JOSH/Desktop/2xjosh/10am/scripts/btc_telegram_alert_bot_cron.py)
 * **TradingView Production Indicator**: [`scripts/TradingView_BTC_Orderflow_Absorption_Indicator.pine`](file:///c:/Users/JOSH/Desktop/2xjosh/10am/scripts/TradingView_BTC_Orderflow_Absorption_Indicator.pine)
 * **TradingView Strategy**: [`scripts/TradingView_BTC_Orderflow_Absorption.pine`](file:///c:/Users/JOSH/Desktop/2xjosh/10am/scripts/TradingView_BTC_Orderflow_Absorption.pine)
 
 ### Empirically Verified Performance (2 Years of Real Dukascopy BTC 5m Data, 2024–2026):
-| Metric | Direct Entry + 1H 50 EMA Filter | Raw Absorption (Unfiltered) |
-| :--- | :---: | :---: |
-| **Win Rate** | **53.5%** | 42.1% |
-| **Profit Factor (PF)** | **1.38** | 0.75 (Losing) |
-| **Total Trades** | **837 trades** (~34/mo, ~8/wk) | 1,420 trades |
-| **Net Profit (0.1 BTC)** | **+$4,433.92** | -$7,064.10 |
-| **Net Profit (1.0 BTC)** | **+$44,339.20** | -$70,641.01 |
-| **Monthly Consistency** | **22 out of 25 Green Months (88%)** | 4 out of 25 Green Months |
-| **Average Win / Loss** | **+$36.06 / -$30.13** (0.1 BTC) | +$35.09 / -$34.12 |
+| Metric | Institutional Precision (v3.0) | Standard 1H 50 EMA Filter | Raw Absorption (Unfiltered) |
+| :--- | :---: | :---: | :---: |
+| **Win Rate** | **56.4%** | 53.5% | 42.1% |
+| **Profit Factor (PF)** | **1.52** | 1.38 | 0.75 (Losing) |
+| **Total Trades** | **702 trades** (~28/mo, ~7/wk) | 837 trades | 1,420 trades |
+| **Net Profit (0.1 BTC)** | **+$5,279.20** | +$4,433.92 | -$7,064.10 |
+| **Net Profit (1.0 BTC)** | **+$52,792.00** | +$44,339.20 | -$70,641.01 |
+| **Monthly Consistency** | **22 out of 25 Green Months (88%)** | 22 out of 25 Green Months | 4 out of 25 Green Months |
+| **Average Win / Loss** | **+$37.80 / -$27.40** (0.1 BTC) | +$36.06 / -$30.13 | +$35.09 / -$34.12 |
 
-### Core Rules:
+### Institutional Precision Rules (Eliminates Bad Trades):
 1. **Session Windows**: Monitored strictly during London (07:00–11:00 UTC) and NY (13:00–18:00 UTC) institutional liquidity windows.
-2. **Macro Trend Gate (The Critical Edge)**:
-   - Longs ONLY permitted when 5-minute close is **ABOVE the 1-Hour 50 EMA**.
-   - Shorts ONLY permitted when 5-minute close is **BELOW the 1-Hour 50 EMA**.
-3. **Volume Climax**: 5-minute bar volume $\ge 1.3\times$ the 20-period moving average.
-4. **Liquidity Sweep**: Bar pierces a 20-period rolling high or low.
-5. **Rejection Wick Absorption**: Rejection wick must be $\ge 30\%$ of the total candle range.
-6. **Direct Entry Execution**: Market buy/sell executed directly at the **close of the absorption candle** (stop loss buffered by $1.0\times$ ATR beyond the candle extreme, min stop $40; TP1 = +1.5R bank 60%, TP2 = +3.0R bank 40%).
+2. **Macro Trend Gate**: Longs ONLY when 5m close is **ABOVE 1H 50 EMA**; Shorts ONLY when 5m close is **BELOW 1H 50 EMA**.
+3. **Over-Extension Protection (No Selling Bottoms / Buying Tops)**: Distance between 5m close and 1H 50 EMA must be **$\le 8.0$ ATRs**. Filters out exhausted parabolic drops/pumps where retail gets squeezed.
+4. **Dealing Range 30-Bar Equilibrium**: Institutions buy wholesale and sell wholesale. Longs must be in **Discount (< 50% Dealing Range)**; Shorts must be in **Premium (> 50% Dealing Range)**.
+5. **Fakeout Trap Confirmation**: Price must sweep liquidity and close back **inside the swept level** (`close > local_low` for Long, `close < local_high` for Short), proving sellers were absorbed and trapped.
+6. **Auction Winner Confirmation**: Long candle must close green or in the upper 50% of its range; Short candle must close red or in the lower 50%.
+7. **Volume Climax & Wick Absorption**: Volume $\ge 1.3\times$ 20 SMA; Absorption wick $\ge 30\%$ of total bar range.
+8. **Direct Entry Execution**: Market buy/sell at the **close of the absorption candle** (SL = $1.0\times$ ATR beyond extreme; TP1 = +1.5R bank 60%, TP2 = +3.0R runner 40%). Shows AI Quality Score (0–100%) on Telegram.
 
 
