@@ -1,4 +1,4 @@
-name: Trading Alerts Bot (BTC & NQ 9:30 Sniper)
+name: Trading Alerts Bot (BTC & NQ 9:30 Sniper & NQ Tony Iyke SMC)
 
 on:
   schedule:
@@ -35,3 +35,9 @@ jobs:
         run: |
           python scripts/nq_telegram_alert_bot_cron.py
 
+      - name: Check Tony Iyke NQ SMC Signal & Send Telegram Alert
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python scripts/nq_tony_iyke_telegram_bot_cron.py

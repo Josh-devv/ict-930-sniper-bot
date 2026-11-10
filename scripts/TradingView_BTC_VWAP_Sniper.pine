@@ -116,3 +116,4 @@ if in_eod_window and strategy.position_size != 0
 // Visual markers
 plotshape(short_cond and short_rr_ok, "Short Signal", shape.triangledown, location.abovebar, color.red, size=size.small)
 plotshape(long_cond and long_rr_ok, "Long Signal", shape.triangleup, location.belowbar, color.green, size=size.small)
+

@@ -126,3 +126,4 @@ fill(p_top, p_bot, color=color.new(color.purple, 92), title="15m POI Demand Zone
 
 // Signal shape
 plotshape(tony_iyke_signal, "Tony Iyke Buy Signal", shape.triangleup, location.belowbar, color=color.green, size=size.normal, text="IDM CHOCH BUY")
+

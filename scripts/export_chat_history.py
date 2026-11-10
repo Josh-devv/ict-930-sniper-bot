@@ -57,3 +57,4 @@ with open(out_path, "w", encoding="utf-8") as f:
         f.write("---\n\n")
 
 print(f"Successfully saved to {out_path} ({os.path.getsize(out_path) / 1024:.1f} KB)")
+

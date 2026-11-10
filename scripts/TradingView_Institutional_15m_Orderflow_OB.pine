@@ -1,0 +1,185 @@
+//@version=5
+indicator("Institutional 15m Orderflow & Levels Sniper [AntiCheat Engine]", overlay=true, max_boxes_count=100, max_lines_count=100, max_labels_count=100)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 1. INPUTS & CONFIGURATION
+// ─────────────────────────────────────────────────────────────────────────────
+grp_levels = "Key Institutional Levels"
+show_pdh_pdl = input.bool(true, "Show Previous Day High / Low (PDH/PDL)", group=grp_levels)
+show_or      = input.bool(true, "Show Opening Range (09:30 - 10:00 AM)", group=grp_levels)
+show_swings  = input.bool(true, "Show 15m Structural Swings (20-bar)", group=grp_levels)
+
+grp_of = "Orderflow & Absorption Filter"
+vol_mult     = input.float(1.15, "Volume Climax Multiplier (x SMA20)", minval=1.0, step=0.05, group=grp_of)
+min_wick_pct = input.float(28.0, "Minimum Absorption Wick %", minval=15.0, maxval=60.0, step=1.0, group=grp_of) / 100.0
+
+grp_risk = "Execution & Targets"
+target_rr_1  = input.float(2.0, "TP1 Target R:R", step=0.5, group=grp_risk)
+target_rr_2  = input.float(3.5, "TP2 Runner Target R:R", step=0.5, group=grp_risk)
+min_stop_pts = input.float(8.0, "Min Stop Loss (Points)", group=grp_risk)
+max_stop_pts = input.float(35.0, "Max Stop Loss (Points)", group=grp_risk)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 2. HIGHER TIMEFRAME (1-HOUR) TREND FILTER
+// ─────────────────────────────────────────────────────────────────────────────
+htf_close = request.security(syminfo.tickerid, "60", close, gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+htf_ema20 = request.security(syminfo.tickerid, "60", ta.ema(close, 20), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+htf_bull  = htf_close > htf_ema20
+htf_bear  = htf_close < htf_ema20
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 3. KEY INSTITUTIONAL LEVELS (PDH, PDL, OPENING RANGE, SWINGS)
+// ─────────────────────────────────────────────────────────────────────────────
+// Previous Day High / Low
+var float pdh = na
+var float pdl = na
+[d_high, d_low] = request.security(syminfo.tickerid, "D", [high[1], low[1]], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+pdh := d_high
+pdl := d_low
+
+// 09:30 - 10:00 Opening Range (New York Time)
+t_in_or = not na(time(timeframe.period, "0930-1000:23456", "America/New_York"))
+t_in_trade_sess = not na(time(timeframe.period, "1000-1430:23456", "America/New_York"))
+
+var float or_high = na
+var float or_low  = na
+var bool or_recorded = false
+
+if ta.change(time("D"))
+    or_high := na
+    or_low := na
+    or_recorded := false
+
+if t_in_or
+    if na(or_high) or high > or_high
+        or_high := high
+    if na(or_low) or low < or_low
+        or_low := low
+    or_recorded := true
+
+// 20-bar 15m Structural Swings
+swing_h20 = ta.highest(high[1], 20)
+swing_l20 = ta.lowest(low[1], 20)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 4. ORDERFLOW ABSORPTION & ORDER BLOCK DETECTION
+// ─────────────────────────────────────────────────────────────────────────────
+atr14 = ta.atr(14)
+vol_ma = ta.sma(volume, 20)
+rng = high - low
+rng_safe = rng > 0 ? rng : syminfo.mintick
+
+// Intra-candle Delta Proxy: (2*Close - High - Low) / Range * Volume
+delta_proxy = rng > 0 ? volume * (2.0 * close - high - low) / rng : 0.0
+
+// Wick Calculations
+lower_wick = math.min(open, close) - low
+upper_wick = high - math.max(open, close)
+lower_wick_ratio = lower_wick / rng_safe
+upper_wick_ratio = upper_wick / rng_safe
+
+// Conditions on Candle [1] (The Order Block / Absorption Candle)
+ob_high = high[1]
+ob_low  = low[1]
+ob_open = open[1]
+ob_close = close[1]
+ob_vol   = volume[1]
+ob_vma   = vol_ma[1]
+ob_rng   = ob_high - ob_low
+ob_rng_s = ob_rng > 0 ? ob_rng : syminfo.mintick
+
+ob_lower_wick = math.min(ob_open, ob_close) - ob_low
+ob_upper_wick = ob_high - math.max(ob_open, ob_close)
+ob_lower_ratio = ob_lower_wick / ob_rng_s
+ob_upper_ratio = ob_upper_wick / ob_rng_s
+
+ob_delta = ob_rng > 0 ? ob_vol * (2.0 * ob_close - ob_high - ob_low) / ob_rng : 0.0
+
+// Current Bar Displacement (>= 1.0x ATR)
+disp_body = math.abs(close - open)
+is_bull_disp = (disp_body >= 1.0 * atr14) and (close > open)
+is_bear_disp = (disp_body >= 1.0 * atr14) and (close < open)
+
+// Sweep Detection
+pdl_swept = not na(pdl) and ob_low < pdl and ob_close >= (pdl - 0.5 * atr14)
+orl_swept = or_recorded and not na(or_low) and ob_low < or_low and ob_close >= (or_low - 0.5 * atr14)
+swl_swept = not na(swing_l20[1]) and ob_low < swing_l20[1] and ob_close >= (swing_l20[1] - 0.5 * atr14)
+bull_swept = pdl_swept or orl_swept or swl_swept
+
+pdh_swept = not na(pdh) and ob_high > pdh and ob_close <= (pdh + 0.5 * atr14)
+orh_swept = or_recorded and not na(or_high) and ob_high > or_high and ob_close <= (or_high + 0.5 * atr14)
+swh_swept = not na(swing_h20[1]) and ob_high > swing_h20[1] and ob_close <= (swing_h20[1] + 0.5 * atr14)
+bear_swept = pdh_swept or orh_swept or swh_swept
+
+// Absorption Confirmation
+bull_absorption = (ob_lower_ratio >= min_wick_pct) and (ob_vol >= vol_mult * ob_vma) and (ob_delta > 0 or delta_proxy > 0)
+bear_absorption = (ob_upper_ratio >= min_wick_pct) and (ob_vol >= vol_mult * ob_vma) and (ob_delta < 0 or delta_proxy < 0)
+
+// Valid Signals
+long_signal  = t_in_trade_sess and is_bull_disp and (ob_close < ob_open) and bull_swept and bull_absorption and htf_bull
+short_signal = t_in_trade_sess and is_bear_disp and (ob_close > ob_open) and bear_swept and bear_absorption and htf_bear
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 5. PLOTTING & EXECUTION LEVELS
+// ─────────────────────────────────────────────────────────────────────────────
+var box active_ob = na
+var line mt_line = na
+var line sl_line = na
+var line tp1_line = na
+var line tp2_line = na
+
+if long_signal
+    // 50% Mean Threshold (MT)
+    block_top = math.max(ob_open, ob_close)
+    block_bot = ob_low
+    mt_entry  = (block_top + block_bot) / 2.0
+    stop_loss = block_bot - 1.0
+    risk      = mt_entry - stop_loss
+    
+    if risk >= min_stop_pts and risk <= max_stop_pts
+        tp1 = mt_entry + target_rr_1 * risk
+        tp2 = mt_entry + target_rr_2 * risk
+        
+        pool_str = pdl_swept ? "PDL" : (orl_swept ? "ORL" : "SWING LOW")
+        label.new(bar_index, low - 4.0, "LONG 15m OB\nSweep: " + pool_str + "\nMT: " + str.tostring(mt_entry, "#.##") + "\nSL: " + str.tostring(stop_loss, "#.##"), 
+                  color=color.green, textcolor=color.white, style=label.style_label_up, size=size.small)
+        
+        box.new(bar_index - 1, block_top, bar_index + 12, block_bot, 
+                border_color=color.green, bgcolor=color.new(color.green, 85))
+        line.new(bar_index - 1, mt_entry, bar_index + 12, mt_entry, color=color.lime, width=2, style=line.style_dashed)
+        line.new(bar_index - 1, stop_loss, bar_index + 12, stop_loss, color=color.red, width=2)
+        line.new(bar_index - 1, tp1, bar_index + 12, tp1, color=color.teal, width=2)
+        line.new(bar_index - 1, tp2, bar_index + 12, tp2, color=color.aqua, width=2)
+        
+        alert("Institutional Long Setup: " + pool_str + " Sweep | MT Entry: " + str.tostring(mt_entry) + " | SL: " + str.tostring(stop_loss), alert.freq_once_per_bar_close)
+
+if short_signal
+    block_top = ob_high
+    block_bot = math.min(ob_open, ob_close)
+    mt_entry  = (block_top + block_bot) / 2.0
+    stop_loss = block_top + 1.0
+    risk      = stop_loss - mt_entry
+    
+    if risk >= min_stop_pts and risk <= max_stop_pts
+        tp1 = mt_entry - target_rr_1 * risk
+        tp2 = mt_entry - target_rr_2 * risk
+        
+        pool_str = pdh_swept ? "PDH" : (orh_swept ? "ORH" : "SWING HIGH")
+        label.new(bar_index, high + 4.0, "SHORT 15m OB\nSweep: " + pool_str + "\nMT: " + str.tostring(mt_entry, "#.##") + "\nSL: " + str.tostring(stop_loss, "#.##"), 
+                  color=color.red, textcolor=color.white, style=label.style_label_down, size=size.small)
+        
+        box.new(bar_index - 1, block_top, bar_index + 12, block_bot, 
+                border_color=color.red, bgcolor=color.new(color.red, 85))
+        line.new(bar_index - 1, mt_entry, bar_index + 12, mt_entry, color=color.orange, width=2, style=line.style_dashed)
+        line.new(bar_index - 1, stop_loss, bar_index + 12, stop_loss, color=color.red, width=2)
+        line.new(bar_index - 1, tp1, bar_index + 12, tp1, color=color.teal, width=2)
+        line.new(bar_index - 1, tp2, bar_index + 12, tp2, color=color.aqua, width=2)
+        
+        alert("Institutional Short Setup: " + pool_str + " Sweep | MT Entry: " + str.tostring(mt_entry) + " | SL: " + str.tostring(stop_loss), alert.freq_once_per_bar_close)
+
+// Visual Key Level Lines
+plot(show_pdh_pdl ? pdh : na, "PDH", color=color.new(color.red, 40), style=plot.style_circles)
+plot(show_pdh_pdl ? pdl : na, "PDL", color=color.new(color.green, 40), style=plot.style_circles)
+plot(show_or and or_recorded ? or_high : na, "OR High", color=color.new(color.orange, 50), style=plot.style_linebr)
+plot(show_or and or_recorded ? or_low  : na, "OR Low",  color=color.new(color.blue, 50), style=plot.style_linebr)
+

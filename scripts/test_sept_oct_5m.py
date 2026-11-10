@@ -135,3 +135,4 @@ for month_name, s_d, e_d in windows:
         print(f"  Max Drawdown (1 NQ) : -${abs(dd_5mnq)*2:.2f}")
     else:
         print(f"\n{month_name}: 0 trades")
+

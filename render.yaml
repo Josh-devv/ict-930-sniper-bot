@@ -10,3 +10,4 @@ services:
         value: 8290114978:AAETL_UeHqbu8r4n2jHvDXxW-VKuEnvyp0c
       - key: TELEGRAM_CHAT_ID
         value: "5642644592"
+

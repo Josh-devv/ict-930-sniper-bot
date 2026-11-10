@@ -1,0 +1,149 @@
+//@version=5
+indicator("Institutional Orderflow & Liquidity Engine [AntiCheat]", overlay=true, max_boxes_count=200, max_lines_count=200, max_labels_count=200)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 1. MODE SELECTION & INPUTS
+// ─────────────────────────────────────────────────────────────────────────────
+grp_mode = "Strategy Presets"
+mode_select = input.string("5m Active (5-8 trades/mo)", "Operating Mode", 
+                           options=["5m Active (5-8 trades/mo)", "3m High-Frequency (7-10 trades/mo)", "15m Sniper (Ultra-Strict)"], 
+                           group=grp_mode)
+
+grp_levels = "Key Institutional Levels"
+show_pdh_pdl = input.bool(true, "Show Previous Day High / Low (PDH/PDL)", group=grp_levels)
+show_swings  = input.bool(true, "Show Structural Fractal Swings", group=grp_levels)
+
+grp_risk = "Execution & Risk Management"
+target_rr    = input.float(1.5, "Target R:R Ratio", step=0.5, minval=1.0, maxval=4.0, group=grp_risk)
+min_stop_pts = input.float(6.0, "Min Stop Loss (Points)", group=grp_risk)
+max_stop_pts = input.float(25.0, "Max Stop Loss (Points)", group=grp_risk)
+
+// Auto-adjust parameters based on Mode
+int swing_len = mode_select == "3m High-Frequency (7-10 trades/mo)" ? 10 : (mode_select == "5m Active (5-8 trades/mo)" ? 5 : 20)
+float wick_threshold = mode_select == "15m Sniper (Ultra-Strict)" ? 0.28 : 0.25
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 2. HIGHER TIMEFRAME (1-HOUR) DIRECTIONAL FILTER
+// ─────────────────────────────────────────────────────────────────────────────
+htf_close = request.security(syminfo.tickerid, "60", close, gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+htf_ema20 = request.security(syminfo.tickerid, "60", ta.ema(close, 20), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+htf_bull  = htf_close > htf_ema20
+htf_bear  = htf_close < htf_ema20
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 3. KEY LEVELS & SWINGS
+// ─────────────────────────────────────────────────────────────────────────────
+// Previous Day High / Low
+var float pdh = na
+var float pdl = na
+[d_high, d_low] = request.security(syminfo.tickerid, "D", [high[1], low[1]], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+pdh := d_high
+pdl := d_low
+
+// Rolling Swing High and Low
+swing_h = ta.highest(high[1], swing_len)
+swing_l = ta.lowest(low[1], swing_len)
+
+// Trading Hours Window: 09:45 AM - 15:30 PM (New York Time)
+t_in_sess = not na(time(timeframe.period, "0945-1530:23456", "America/New_York"))
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 4. ORDERFLOW ABSORPTION & ORDER BLOCK DETECTION
+// ─────────────────────────────────────────────────────────────────────────────
+atr14 = ta.atr(14)
+rng = high - low
+rng_safe = rng > 0 ? rng : syminfo.mintick
+
+// Intra-candle Delta Proxy: (2*Close - High - Low) / Range * Volume
+delta_proxy = rng > 0 ? volume * (2.0 * close - high - low) / rng : 0.0
+
+// Previous Candle [1] (The Order Block / Absorption Wick Candle)
+ob_high = high[1]
+ob_low  = low[1]
+ob_open = open[1]
+ob_close = close[1]
+ob_rng   = ob_high - ob_low
+ob_rng_s = ob_rng > 0 ? ob_rng : syminfo.mintick
+
+ob_lower_wick = math.min(ob_open, ob_close) - ob_low
+ob_upper_wick = ob_high - math.max(ob_open, ob_close)
+ob_lower_ratio = ob_lower_wick / ob_rng_s
+ob_upper_ratio = ob_upper_wick / ob_rng_s
+
+ob_delta = ob_rng > 0 ? volume[1] * (2.0 * ob_close - ob_high - ob_low) / ob_rng : 0.0
+
+// Current Bar Displacement (>= 0.85x ATR)
+disp_body = math.abs(close - open)
+disp_min = mode_select == "15m Sniper (Ultra-Strict)" ? 1.0 * atr14 : 0.85 * atr14
+is_bull_disp = (disp_body >= disp_min) and (close > open)
+is_bear_disp = (disp_body >= disp_min) and (close < open)
+
+// Sweep Logic
+bull_sweep = not na(swing_l[1]) and (ob_low < swing_l[1]) and (ob_close >= swing_l[1] - 0.75 * atr14)
+bear_sweep = not na(swing_h[1]) and (ob_high > swing_h[1]) and (ob_close <= swing_h[1] + 0.75 * atr14)
+
+// Absorption Filter
+bull_absorption = (ob_lower_ratio >= wick_threshold) or (ob_delta > 0) or (delta_proxy > 0)
+bear_absorption = (ob_upper_ratio >= wick_threshold) or (ob_delta < 0) or (delta_proxy < 0)
+
+// Strategy Signals
+long_signal  = t_in_sess and is_bull_disp and (ob_close < ob_open) and bull_sweep and bull_absorption and htf_bull
+short_signal = t_in_sess and is_bear_disp and (ob_close > ob_open) and bear_sweep and bear_absorption and htf_bear
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 5. VISUALIZATION & REAL-TIME ALERTS
+// ─────────────────────────────────────────────────────────────────────────────
+if long_signal
+    block_top = math.max(ob_open, ob_close)
+    block_bot = ob_low
+    mt_entry  = (block_top + block_bot) / 2.0
+    stop_loss = block_bot - 1.0
+    risk      = mt_entry - stop_loss
+    
+    if risk >= min_stop_pts and risk <= max_stop_pts
+        tp_px = mt_entry + target_rr * risk
+        
+        label.new(bar_index, low - (0.5 * atr14), 
+                  "BUY 50% MT: " + str.tostring(mt_entry, "#.##") + 
+                  "\nSL: " + str.tostring(stop_loss, "#.##") + " (" + str.tostring(risk, "#.#") + "p)" +
+                  "\nTP (" + str.tostring(target_rr, "#.#") + "R): " + str.tostring(tp_px, "#.##"), 
+                  color=color.green, textcolor=color.white, style=label.style_label_up, size=size.small)
+        
+        box.new(bar_index - 1, block_top, bar_index + 10, block_bot, 
+                border_color=color.green, bgcolor=color.new(color.green, 85))
+        line.new(bar_index - 1, mt_entry, bar_index + 10, mt_entry, color=color.lime, width=2, style=line.style_dashed)
+        line.new(bar_index - 1, stop_loss, bar_index + 10, stop_loss, color=color.red, width=2)
+        line.new(bar_index - 1, tp_px, bar_index + 10, tp_px, color=color.teal, width=2)
+        
+        alert("NQ BUY Signal | MT Entry: " + str.tostring(mt_entry) + " | SL: " + str.tostring(stop_loss) + " | TP: " + str.tostring(tp_px), alert.freq_once_per_bar_close)
+
+if short_signal
+    block_top = ob_high
+    block_bot = math.min(ob_open, ob_close)
+    mt_entry  = (block_top + block_bot) / 2.0
+    stop_loss = block_top + 1.0
+    risk      = stop_loss - mt_entry
+    
+    if risk >= min_stop_pts and risk <= max_stop_pts
+        tp_px = mt_entry - target_rr * risk
+        
+        label.new(bar_index, high + (0.5 * atr14), 
+                  "SELL 50% MT: " + str.tostring(mt_entry, "#.##") + 
+                  "\nSL: " + str.tostring(stop_loss, "#.##") + " (" + str.tostring(risk, "#.#") + "p)" +
+                  "\nTP (" + str.tostring(target_rr, "#.#") + "R): " + str.tostring(tp_px, "#.##"), 
+                  color=color.red, textcolor=color.white, style=label.style_label_down, size=size.small)
+        
+        box.new(bar_index - 1, block_top, bar_index + 10, block_bot, 
+                border_color=color.red, bgcolor=color.new(color.red, 85))
+        line.new(bar_index - 1, mt_entry, bar_index + 10, mt_entry, color=color.orange, width=2, style=line.style_dashed)
+        line.new(bar_index - 1, stop_loss, bar_index + 10, stop_loss, color=color.red, width=2)
+        line.new(bar_index - 1, tp_px, bar_index + 10, tp_px, color=color.teal, width=2)
+        
+        alert("NQ SELL Signal | MT Entry: " + str.tostring(mt_entry) + " | SL: " + str.tostring(stop_loss) + " | TP: " + str.tostring(tp_px), alert.freq_once_per_bar_close)
+
+// Visual Key Level Lines
+plot(show_pdh_pdl ? pdh : na, "PDH", color=color.new(color.red, 40), style=plot.style_circles)
+plot(show_pdh_pdl ? pdl : na, "PDL", color=color.new(color.green, 40), style=plot.style_circles)
+plot(show_swings ? swing_h : na, "Swing High", color=color.new(color.maroon, 60), style=plot.style_linebr)
+plot(show_swings ? swing_l : na, "Swing Low",  color=color.new(color.teal, 60), style=plot.style_linebr)
+
