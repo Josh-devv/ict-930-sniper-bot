@@ -164,8 +164,12 @@ def main():
                             risk_nq   = risk_pts * 20.0
 
                             if 6.0 <= risk_pts <= 30.0:
-                                tp1 = mt_entry + 1.5 * risk_pts
-                                tp2 = mt_entry + 3.0 * risk_pts
+                                tp1_pts = max(risk_pts * 2.5, 25.0)
+                                tp2_pts = max(risk_pts * 5.0, 50.0)
+                                tp1 = mt_entry + tp1_pts
+                                tp2 = mt_entry + tp2_pts
+                                tp1_r = tp1_pts / risk_pts
+                                tp2_r = tp2_pts / risk_pts
 
                                 ai_score = 65
                                 if velocity_ratio >= 0.85: ai_score += 15
@@ -188,8 +192,8 @@ def main():
                                     f"🔻 <b>STOP LOSS:</b> <code>{stop_loss:,.2f}</code>\n"
                                     f"   (-{risk_pts:.1f} pts | <b>${risk_mnq:.1f}</b> MNQ | <b>${risk_nq:.0f}</b> NQ)\n"
                                     f"{'─' * 38}\n"
-                                    f"🏆 <b>TP1 (+1.5R):</b> <code>{tp1:,.2f}</code> (+{risk_pts*1.5:.1f} pts | Scale 60% & BE+1)\n"
-                                    f"🎯 <b>TP2 (+3.0R):</b> <code>{tp2:,.2f}</code> (+{risk_pts*3.0:.1f} pts | Runner)\n"
+                                    f"🏆 <b>TP1 (+{tp1_r:.1f}R):</b> <code>{tp1:,.2f}</code> (+{tp1_pts:.1f} pts | Scale 60% & BE+1)\n"
+                                    f"🎯 <b>TP2 (+{tp2_r:.1f}R):</b> <code>{tp2:,.2f}</code> (+{tp2_pts:.1f} pts | Runner)\n"
                                     f"{'─' * 38}\n"
                                     f"📊 <b>8.8-Yr Verified Edge:</b> 88.9% WR | 11.99 PF (9/9 Green Years)\n"
                                     f"💡 <i>Place Limit at 50% MT. If price leaves without filling, direct entry is valid.</i>"
@@ -217,8 +221,12 @@ def main():
                             risk_nq   = risk_pts * 20.0
 
                             if 6.0 <= risk_pts <= 30.0:
-                                tp1 = mt_entry - 1.5 * risk_pts
-                                tp2 = mt_entry - 3.0 * risk_pts
+                                tp1_pts = max(risk_pts * 2.5, 25.0)
+                                tp2_pts = max(risk_pts * 5.0, 50.0)
+                                tp1 = mt_entry - tp1_pts
+                                tp2 = mt_entry - tp2_pts
+                                tp1_r = tp1_pts / risk_pts
+                                tp2_r = tp2_pts / risk_pts
 
                                 ai_score = 65
                                 if velocity_ratio >= 0.85: ai_score += 15
@@ -241,8 +249,8 @@ def main():
                                     f"🔻 <b>STOP LOSS:</b> <code>{stop_loss:,.2f}</code>\n"
                                     f"   (-{risk_pts:.1f} pts | <b>${risk_mnq:.1f}</b> MNQ | <b>${risk_nq:.0f}</b> NQ)\n"
                                     f"{'─' * 38}\n"
-                                    f"🏆 <b>TP1 (+1.5R):</b> <code>{tp1:,.2f}</code> (+{risk_pts*1.5:.1f} pts | Scale 60% & BE+1)\n"
-                                    f"🎯 <b>TP2 (+3.0R):</b> <code>{tp2:,.2f}</code> (+{risk_pts*3.0:.1f} pts | Runner)\n"
+                                    f"🏆 <b>TP1 (+{tp1_r:.1f}R):</b> <code>{tp1:,.2f}</code> (+{tp1_pts:.1f} pts | Scale 60% & BE+1)\n"
+                                    f"🎯 <b>TP2 (+{tp2_r:.1f}R):</b> <code>{tp2:,.2f}</code> (+{tp2_pts:.1f} pts | Runner)\n"
                                     f"{'─' * 38}\n"
                                     f"📊 <b>8.8-Yr Verified Edge:</b> 88.9% WR | 11.99 PF (9/9 Green Years)\n"
                                     f"💡 <i>Place Limit at 50% MT. If price leaves without filling, direct entry is valid.</i>"
