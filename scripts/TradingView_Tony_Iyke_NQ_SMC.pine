@@ -44,11 +44,11 @@ disp_mult  = input.float(0.50, "Min Displacement Body (x ATR)", step=0.05, group
 cooldown   = input.int(4, "Signal Cooldown (Bars)", minval=1, group=grp_smc)
 
 grp_risk   = "5. Risk & Target Multipliers"
-tp_mode    = input.string("Dynamic Floor (Max of R-Multiple or Min Pts)", "TP Mode", options=["Dynamic Floor (Max of R-Multiple or Min Pts)", "Pure R-Multiple", "Fixed Points"], group=grp_risk, tooltip="Dynamic Floor guarantees TP1 is never smaller than Min Pts (e.g. 25 pts) even on tiny 6-pt stops, while capturing 2.5R - 5.0R on wider stops.")
-rr_target  = input.float(2.5, "TP1 Target (R-Multiple)", step=0.1, group=grp_risk, tooltip="Target for scaling out 50-60% of position and moving SL to BE")
-rr_runner  = input.float(5.0, "TP2 Runner Target (R-Multiple)", step=0.5, group=grp_risk, tooltip="Target for trailing the runner to catch full session expansion")
-min_tp_pts = input.float(25.0, "Min TP1 Target (Points Floor)", step=5.0, group=grp_risk, tooltip="Minimum points for TP1 (e.g. 25 pts = $50 on MNQ / $500 on NQ)")
-runner_pts = input.float(50.0, "Min TP2 Target (Points Floor)", step=5.0, group=grp_risk, tooltip="Minimum points for TP2 runner (e.g. 50 pts = $100 on MNQ / $1,000 on NQ)")
+tp_mode    = input.string("Dynamic Floor (Max of R-Multiple or Min Pts)", "TP Mode", options=["Dynamic Floor (Max of R-Multiple or Min Pts)", "Pure R-Multiple", "Fixed Points"], group=grp_risk, tooltip="Dynamic Floor guarantees TP1 is never smaller than Min Pts (e.g. 30 pts) even on tiny stops, while capturing 3.0R - 6.0R on wider stops.")
+rr_target  = input.float(3.0, "TP1 Target (1:3 R-Multiple)", step=0.1, group=grp_risk, tooltip="1:3 Risk to Reward target (e.g. 10 pt risk -> +30 pt target)")
+rr_runner  = input.float(6.0, "TP2 Runner Target (1:6 R-Multiple)", step=0.5, group=grp_risk, tooltip="1:6 Runner target to catch full session expansion")
+min_tp_pts = input.float(30.0, "Min TP1 Target (Points Floor)", step=5.0, group=grp_risk, tooltip="Minimum points for TP1 (e.g. 30 pts = $60 on MNQ / $600 on NQ)")
+runner_pts = input.float(60.0, "Min TP2 Target (Points Floor)", step=5.0, group=grp_risk, tooltip="Minimum points for TP2 runner (e.g. 60 pts = $120 on MNQ / $1,200 on NQ)")
 min_stop   = input.float(6.0, "Min Stop Loss (Pts)", step=1.0, group=grp_risk)
 max_stop   = input.float(30.0, "Max Stop Loss (Pts)", step=1.0, group=grp_risk)
 
