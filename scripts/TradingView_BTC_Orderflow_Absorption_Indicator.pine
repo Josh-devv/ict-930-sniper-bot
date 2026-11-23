@@ -52,6 +52,7 @@ show_history_boxes = input.bool(true, "Show Previous Trade Position Boxes", grou
 show_active_lines  = input.bool(true, "Project Live Lines on Active Setup", group=grp_visual, tooltip="Extends live horizontal Entry/SL/TP lines on the latest active trade.")
 
 grp_time   = "6. Session Windows (UTC)"
+weekdays_only = input.bool(true, "Trade Weekdays Only (Skip Sat/Sun)", group=grp_time, tooltip="Blocks all weekend signals (Saturday & Sunday) to avoid illiquidity traps and exchange manipulation.")
 enable_london = input.bool(true, "London Session (07:00 - 11:00 UTC)", group=grp_time)
 enable_ny     = input.bool(true, "NY Session (13:00 - 18:00 UTC)", group=grp_time)
 all_hours     = input.bool(false, "Allow All Sessions (24/7 Lookback)", group=grp_time, tooltip="Enable to see setups outside London/NY for full historical lookback.")
@@ -82,9 +83,11 @@ plot(show_htf ? htf_ema : na, "1H 50 EMA Macro Trend", color=color.new(color.yel
 plot(show_dr ? dr_eq : na, "Dealing Range 50% Equilibrium", color=color.new(color.gray, 50), style=plot.style_circles)
 
 // Time Windows
-in_london = not na(time(timeframe.period, "0700-1100", "UTC")) and enable_london
-in_ny     = not na(time(timeframe.period, "1300-1800", "UTC")) and enable_ny
-is_active_session = all_hours or in_london or in_ny
+in_london    = not na(time(timeframe.period, "0700-1100", "UTC")) and enable_london
+in_ny        = not na(time(timeframe.period, "1300-1800", "UTC")) and enable_ny
+is_weekday   = (dayofweek != dayofweek.saturday and dayofweek != dayofweek.sunday)
+pass_weekday = not weekdays_only or is_weekday
+is_active_session = pass_weekday and (all_hours or in_london or in_ny)
 
 bgcolor(in_london ? color.new(color.blue, 96) : na, title="London Session")
 bgcolor(in_ny ? color.new(color.orange, 96) : na, title="NY Session")

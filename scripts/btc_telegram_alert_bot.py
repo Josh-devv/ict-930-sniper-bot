@@ -33,10 +33,13 @@ WICK_MIN           = 0.30    # Min 30% absorption wick
 LOOKBACK           = 20      # Local sweep lookback
 ATR_MULT           = 1.0     # Stop buffer
 MIN_STOP_PTS       = 40.0    # Minimum stop buffer in dollars
+WEEKDAYS_ONLY      = True    # Trade Monday - Friday only (skip Saturday & Sunday)
 
 # Session check (UTC)
 def is_active_session():
     now_utc = datetime.now(timezone.utc)
+    if WEEKDAYS_ONLY and now_utc.weekday() >= 5:
+        return False
     hour = now_utc.hour
     in_london = (hour >= 7 and hour <= 11)
     in_ny     = (hour >= 13 and hour <= 18)
