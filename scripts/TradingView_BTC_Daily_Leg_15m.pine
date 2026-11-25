@@ -227,17 +227,10 @@ if final_sell and show_tp_sl
 bgcolor(pass_time ? color.new(color.blue, 95) : na)
 
 // ==================== ALERTS ====================
-// BUY alert
-alertcondition(final_buy,
-     title="BTC Daily Leg BUY",
-     message='{"signal":"BUY","entry":{{close}},"stop":' + str.tostring(bull_stop) + ',"tp1":' + str.tostring(bull_tp1) + ',"tp2":' + str.tostring(bull_tp2) + ',"risk":' + str.tostring(bull_risk) + '}')
+// Use alert() instead of alertcondition() so we can include series values (TP/SL levels)
 
-// SELL alert
-alertcondition(final_sell,
-     title="BTC Daily Leg SELL",
-     message='{"signal":"SELL","entry":{{close}},"stop":' + str.tostring(bear_stop) + ',"tp1":' + str.tostring(bear_tp1) + ',"tp2":' + str.tostring(bear_tp2) + ',"risk":' + str.tostring(bear_risk) + '}')
+if final_buy
+    alert('{"signal":"BUY","entry":' + str.tostring(close, "#.0") + ',"stop":' + str.tostring(bull_stop, "#.0") + ',"tp1":' + str.tostring(bull_tp1, "#.0") + ',"tp2":' + str.tostring(bull_tp2, "#.0") + ',"risk":' + str.tostring(bull_risk, "#.0") + '}', alert.freq_once_per_bar_close)
 
-// ANY signal
-alertcondition(final_buy or final_sell,
-     title="BTC Daily Leg ANY Signal",
-     message='{"signal":"' + (final_buy ? "BUY" : "SELL") + '","entry":{{close}},"tf":"15m"}')
+if final_sell
+    alert('{"signal":"SELL","entry":' + str.tostring(close, "#.0") + ',"stop":' + str.tostring(bear_stop, "#.0") + ',"tp1":' + str.tostring(bear_tp1, "#.0") + ',"tp2":' + str.tostring(bear_tp2, "#.0") + ',"risk":' + str.tostring(bear_risk, "#.0") + '}', alert.freq_once_per_bar_close)
